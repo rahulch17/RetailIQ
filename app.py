@@ -1,5 +1,10 @@
-import sqlite3
+# ============================================================
+# RetailIQ - Streamlit Application
+# Walmart Dataset Version
+# ============================================================
+
 from pathlib import Path
+import sqlite3
 
 import pandas as pd
 import plotly.express as px
@@ -8,205 +13,997 @@ import streamlit as st
 from agent import RetailIQAgent
 from forecast import forecast_next_weeks
 
+
+# ============================================================
+# PAGE CONFIG
+# ============================================================
+
 st.set_page_config(
     page_title="RetailIQ",
     page_icon="📦",
     layout="wide"
 )
 
+
+# ============================================================
+# HEADER
+# ============================================================
+
 st.title("📦 RetailIQ")
-st.caption("Demand Forecasting and Multi-Tool Business Assistant")
 
-DB = Path("retailiq.db")
+st.caption(
+    "Retail Sales Intelligence • Demand Forecasting • "
+    "AI Business Assistant"
+)
 
-if not DB.exists():
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+DB_PATH = Path(
+    "retailiq.db"
+)
+
+if not DB_PATH.exists():
+
     st.error(
-        "Database not found. Run:\n\n"
-        "python generate_demo_data.py\n"
+        "retailiq.db was not found."
+    )
+
+    st.code(
         "python pipeline.py\n"
         "python train_models.py"
     )
+
     st.stop()
+
+
+# ============================================================
+# LOAD DATABASE
+# ============================================================
+
+@st.cache_data
+def load_database():
+
+    with sqlite3.connect(
+        DB_PATH
+    ) as connection:
+
+        products = pd.read_sql(
+            """
+            SELECT *
+            FROM dim_product
+            """,
+            connection
+        )
+
+        stores = pd.read_sql(
+            """
+            SELECT *
+            FROM dim_store
+            """,
+            connection
+        )
+
+        weekly = pd.read_sql(
+            """
+            SELECT *
+            FROM fact_weekly_sales
+            """,
+            connection
+        )
+
+    weekly[
+        "week_start"
+    ] = pd.to_datetime(
+        weekly[
+            "week_start"
+        ],
+        errors="coerce"
+    )
+
+    return (
+        products,
+        stores,
+        weekly
+    )
+
+
+products, stores, weekly = (
+    load_database()
+)
+
+
+# ============================================================
+# AGENT
+# ============================================================
 
 agent = RetailIQAgent()
 
-with sqlite3.connect(DB) as con:
-    products = pd.read_sql(
-        "SELECT * FROM dim_product",
-        con
-    )
-    stores = pd.read_sql(
-        "SELECT * FROM dim_store",
-        con
-    )
-    weekly = pd.read_sql(
-        "SELECT * FROM fact_weekly_sales",
-        con
-    )
 
-tab1, tab2, tab3 = st.tabs([
-    "Executive Dashboard",
-    "Forecast Explorer",
-    "AI Assistant"
-])
+# ============================================================
+# TABS
+# ============================================================
+
+tab1, tab2, tab3 = st.tabs(
+    [
+        "📊 Executive Dashboard",
+        "🔮 Forecast Explorer",
+        "🤖 AI Assistant"
+    ]
+)
+
+
+# ============================================================
+# TAB 1
+# EXECUTIVE DASHBOARD
+# ============================================================
 
 with tab1:
-    st.subheader("Executive Dashboard")
 
-    total_revenue = weekly["revenue"].sum()
-    total_units = weekly["quantity"].sum()
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Revenue", f"{total_revenue:,.0f}")
-    c2.metric("Units", f"{total_units:,.0f}")
-    c3.metric(
-        "Products",
-        f"{products['product_id'].nunique():,}"
+    st.header(
+        "📊 Executive Dashboard"
     )
 
-    weekly["week_start"] = pd.to_datetime(
-        weekly["week_start"]
+    # --------------------------------------------------------
+    # KPIs
+    # --------------------------------------------------------
+
+    total_sales = (
+        weekly["quantity"]
+        .sum()
     )
 
-    trend = weekly.groupby(
-        "week_start",
-        as_index=False
-    ).agg(
-        revenue=("revenue", "sum"),
-        units=("quantity", "sum")
+    total_revenue = (
+        weekly["revenue"]
+        .sum()
+    )
+
+    department_count = (
+        products[
+            "product_id"
+        ]
+        .nunique()
+    )
+
+    store_count = (
+        stores[
+            "store_id"
+        ]
+        .nunique()
+    )
+
+    col1, col2, col3, col4 = (
+        st.columns(4)
+    )
+
+    col1.metric(
+        "Total Sales",
+        f"{total_sales:,.0f}"
+    )
+
+    col2.metric(
+        "Total Revenue",
+        f"{total_revenue:,.0f}"
+    )
+
+    col3.metric(
+        "Departments",
+        f"{department_count:,}"
+    )
+
+    col4.metric(
+        "Stores",
+        f"{store_count:,}"
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # Weekly trend
+    # --------------------------------------------------------
+
+    trend = (
+        weekly
+        .groupby(
+            "week_start",
+            as_index=False
+        )
+        .agg(
+            sales=(
+                "quantity",
+                "sum"
+            ),
+            revenue=(
+                "revenue",
+                "sum"
+            )
+        )
+    )
+
+    fig = px.line(
+        trend,
+        x="week_start",
+        y="revenue",
+        markers=True,
+        title="Weekly Revenue Trend"
+    )
+
+    fig.update_layout(
+        xaxis_title="Week",
+        yaxis_title="Revenue",
+        hovermode="x unified"
     )
 
     st.plotly_chart(
-        px.line(
-            trend,
-            x="week_start",
-            y="revenue",
-            title="Revenue Trend"
-        ),
+        fig,
         use_container_width=True
     )
 
-    col1, col2 = st.columns(2)
+    # --------------------------------------------------------
+    # Department + Store charts
+    # --------------------------------------------------------
+
+    col1, col2 = (
+        st.columns(2)
+    )
+
+    # --------------------------------------------------------
+    # Departments
+    # --------------------------------------------------------
 
     with col1:
-        cat = (
-            weekly.merge(products, on="product_id")
-            .groupby("category", as_index=False)["revenue"]
-            .sum()
-            .sort_values("revenue", ascending=False)
+
+        department_sales = (
+            weekly
+            .merge(
+                products[
+                    [
+                        "product_id",
+                        "product_name"
+                    ]
+                ],
+                on="product_id",
+                how="left"
+            )
+            .groupby(
+                [
+                    "product_id",
+                    "product_name"
+                ],
+                as_index=False
+            )
+            .agg(
+                sales=(
+                    "quantity",
+                    "sum"
+                )
+            )
+            .sort_values(
+                "sales",
+                ascending=False
+            )
+            .head(10)
+        )
+
+        fig = px.bar(
+            department_sales,
+            x="sales",
+            y="product_name",
+            orientation="h",
+            title="Top 10 Departments"
+        )
+
+        fig.update_layout(
+            xaxis_title="Sales",
+            yaxis_title="Department"
         )
 
         st.plotly_chart(
-            px.bar(
-                cat,
-                x="category",
-                y="revenue",
-                title="Category Performance"
-            ),
+            fig,
             use_container_width=True
         )
+
+    # --------------------------------------------------------
+    # Stores
+    # --------------------------------------------------------
 
     with col2:
-        rank = (
-            weekly.merge(stores, on="store_id")
+
+        store_sales = (
+            weekly
+            .merge(
+                stores[
+                    [
+                        "store_id",
+                        "store_name"
+                    ]
+                ],
+                on="store_id",
+                how="left"
+            )
             .groupby(
-                ["store_id", "store_name"],
+                [
+                    "store_id",
+                    "store_name"
+                ],
                 as_index=False
-            )["revenue"]
-            .sum()
-            .sort_values("revenue", ascending=False)
+            )
+            .agg(
+                sales=(
+                    "quantity",
+                    "sum"
+                )
+            )
+            .sort_values(
+                "sales",
+                ascending=False
+            )
+        )
+
+        fig = px.bar(
+            store_sales,
+            x="store_name",
+            y="sales",
+            title="Store Performance"
+        )
+
+        fig.update_layout(
+            xaxis_title="Store",
+            yaxis_title="Sales"
         )
 
         st.plotly_chart(
-            px.bar(
-                rank,
-                x="store_name",
-                y="revenue",
-                title="Store Ranking"
-            ),
+            fig,
             use_container_width=True
         )
 
+    # --------------------------------------------------------
+    # Markdown analysis
+    # --------------------------------------------------------
+
+    st.subheader(
+        "📈 Markdown / Promotion Analysis"
+    )
+
+    if "promotion_rate" in weekly.columns:
+
+        markdown_data = (
+            weekly
+            .assign(
+                status=weekly[
+                    "promotion_rate"
+                ]
+                .apply(
+                    lambda x:
+                    "Markdown"
+                    if x > 0
+                    else "No Markdown"
+                )
+            )
+            .groupby(
+                "status",
+                as_index=False
+            )
+            .agg(
+                average_sales=(
+                    "quantity",
+                    "mean"
+                )
+            )
+        )
+
+        markdown_data[
+            "average_sales"
+        ] = (
+            markdown_data[
+                "average_sales"
+            ]
+            .round(2)
+        )
+
+        fig = px.bar(
+            markdown_data,
+            x="status",
+            y="average_sales",
+            title="Average Weekly Sales: Markdown vs No Markdown"
+        )
+
+        fig.update_layout(
+            xaxis_title="Status",
+            yaxis_title="Average Weekly Sales"
+        )
+
+        st.plotly_chart(
+            fig,
+            use_container_width=True
+        )
+
+    # --------------------------------------------------------
+    # Model metrics
+    # --------------------------------------------------------
+
+    metrics_path = Path(
+        "artifacts/metrics.csv"
+    )
+
+    if metrics_path.exists():
+
+        st.subheader(
+            "🤖 Model Performance"
+        )
+
+        metrics = pd.read_csv(
+            metrics_path
+        )
+
+        st.dataframe(
+            metrics,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ============================================================
+# TAB 2
+# FORECAST EXPLORER
+# ============================================================
+
 with tab2:
-    st.subheader("Forecast Explorer")
 
-    p = st.selectbox(
-        "Product",
-        products["product_id"].tolist()
-    )
-    s = st.selectbox(
-        "Store",
-        stores["store_id"].tolist()
-    )
-    h = st.slider(
-        "Forecast horizon (weeks)",
-        1, 12, 4
+    st.header(
+        "🔮 Demand Forecast Explorer"
     )
 
-    if st.button("Generate Forecast"):
+    st.write(
+        "Select a department and store to "
+        "forecast future weekly demand."
+    )
+
+    col1, col2, col3 = (
+        st.columns(3)
+    )
+
+    # --------------------------------------------------------
+    # Department
+    # --------------------------------------------------------
+
+    with col1:
+
+        product_options = (
+            products[
+                "product_id"
+            ]
+            .tolist()
+        )
+
+        selected_product = (
+            st.selectbox(
+                "Department",
+                product_options
+            )
+        )
+
+    # --------------------------------------------------------
+    # Store
+    # --------------------------------------------------------
+
+    with col2:
+
+        store_options = (
+            stores[
+                "store_id"
+            ]
+            .tolist()
+        )
+
+        selected_store = (
+            st.selectbox(
+                "Store",
+                store_options
+            )
+        )
+
+    # --------------------------------------------------------
+    # Horizon
+    # --------------------------------------------------------
+
+    with col3:
+
+        horizon = st.slider(
+            "Forecast Horizon",
+            min_value=1,
+            max_value=12,
+            value=4
+        )
+
+    # --------------------------------------------------------
+    # Selected department information
+    # --------------------------------------------------------
+
+    product_row = products[
+        products[
+            "product_id"
+        ]
+        == selected_product
+    ]
+
+    if not product_row.empty:
+
+        st.info(
+            f"Selected Department: "
+            f"{product_row.iloc[0]['product_name']}"
+        )
+
+    # --------------------------------------------------------
+    # Selected store
+    # --------------------------------------------------------
+
+    store_row = stores[
+        stores[
+            "store_id"
+        ]
+        == selected_store
+    ]
+
+    if not store_row.empty:
+
+        st.info(
+            f"Selected Store: "
+            f"{store_row.iloc[0]['store_name']}"
+        )
+
+    # --------------------------------------------------------
+    # Generate
+    # --------------------------------------------------------
+
+    if st.button(
+        "🔮 Generate Forecast",
+        type="primary"
+    ):
+
         try:
-            fc = forecast_next_weeks(
-                weekly, p, s, h
+
+            forecast_result = (
+                forecast_next_weeks(
+                    weekly,
+                    selected_product,
+                    selected_store,
+                    horizon
+                )
+            )
+
+            st.success(
+                "Forecast generated successfully."
+            )
+
+            # ------------------------------------------------
+            # Clean table
+            # ------------------------------------------------
+
+            forecast_table = (
+                forecast_result
+                .copy()
+            )
+
+            if "week_start" in forecast_table.columns:
+
+                forecast_table[
+                    "week_start"
+                ] = pd.to_datetime(
+                    forecast_table[
+                        "week_start"
+                    ],
+                    errors="coerce"
+                ).dt.strftime(
+                    "%Y-%m-%d"
+                )
+
+            for column in forecast_table.columns:
+
+                if (
+                    column != "week_start"
+                    and pd.api.types.is_numeric_dtype(
+                        forecast_table[column]
+                    )
+                ):
+
+                    forecast_table[column] = (
+                        forecast_table[column]
+                        .round(2)
+                    )
+
+            # ------------------------------------------------
+            # Rename columns
+            # ------------------------------------------------
+
+            rename_map = {}
+
+            if "week_start" in forecast_table.columns:
+
+                rename_map[
+                    "week_start"
+                ] = "Week"
+
+            if "predicted_demand" in forecast_table.columns:
+
+                rename_map[
+                    "predicted_demand"
+                ] = "Predicted Demand"
+
+            forecast_table = (
+                forecast_table
+                .rename(
+                    columns=rename_map
+                )
+            )
+
+            # ------------------------------------------------
+            # Result table
+            # ------------------------------------------------
+
+            st.subheader(
+                "Forecast Results"
             )
 
             st.dataframe(
-                fc,
-                use_container_width=True
+                forecast_table,
+                use_container_width=True,
+                hide_index=True
             )
 
-            st.plotly_chart(
-                px.line(
-                    fc,
+            # ------------------------------------------------
+            # Chart
+            # ------------------------------------------------
+
+            if (
+                "week_start"
+                in forecast_result.columns
+                and
+                "predicted_demand"
+                in forecast_result.columns
+            ):
+
+                chart_data = (
+                    forecast_result
+                    .copy()
+                )
+
+                chart_data[
+                    "week_start"
+                ] = pd.to_datetime(
+                    chart_data[
+                        "week_start"
+                    ],
+                    errors="coerce"
+                )
+
+                fig = px.line(
+                    chart_data,
                     x="week_start",
                     y="predicted_demand",
                     markers=True,
-                    title=f"{p} at {s} — Forecast"
-                ),
-                use_container_width=True
+                    title=(
+                        "Future Demand Forecast"
+                    )
+                )
+
+                fig.update_layout(
+                    xaxis_title="Week",
+                    yaxis_title="Predicted Demand",
+                    hovermode="x unified"
+                )
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+        except Exception as error:
+
+            st.error(
+                f"Forecast could not be generated: {error}"
             )
 
-        except Exception as e:
-            st.error(str(e))
+
+# ============================================================
+# TAB 3
+# AI ASSISTANT
+# ============================================================
 
 with tab3:
-    st.subheader("Business Assistant")
+
+    st.header(
+        "🤖 Ask RetailIQ"
+    )
+
+    st.write(
+        "Ask questions about sales, departments, "
+        "stores, markdowns, forecasts, or "
+        "internal business policies."
+    )
+
+    # --------------------------------------------------------
+    # Gemini status
+    # --------------------------------------------------------
+
+    if agent.gemini.enabled:
+
+        st.success(
+            "🟢 Gemini planner is enabled"
+        )
+
+    else:
+
+        st.warning(
+            "🟡 Gemini planner is unavailable. "
+            "RetailIQ is using the fallback planner."
+        )
+
+    # --------------------------------------------------------
+    # Example questions
+    # --------------------------------------------------------
+
+    st.markdown(
+        "**Example questions:**"
+    )
+
+    examples = [
+        "Which departments have the highest sales?",
+        "Which store has the highest sales?",
+        "Show monthly sales.",
+        "What are the markdown effects?",
+        "Forecast Department 1 for Store 1 for 4 weeks.",
+        "What is the return policy?"
+    ]
+
+    for example in examples:
+
+        st.caption(
+            "• " + example
+        )
+
+    # --------------------------------------------------------
+    # Input
+    # --------------------------------------------------------
 
     question = st.text_input(
         "Ask a business question",
         placeholder=(
-            "Examples: What are the top 5 products by revenue? "
-            "What is the returns policy? "
-            "Forecast P001 at S01 for 4 weeks."
+            "Example: Which store has the highest sales?"
         )
     )
 
-    if st.button("Ask RetailIQ") and question:
-        result = agent.answer(question)
+    # --------------------------------------------------------
+    # Ask
+    # --------------------------------------------------------
+
+    if st.button(
+        "Ask RetailIQ",
+        type="primary"
+    ) and question:
+
+        with st.spinner(
+            "RetailIQ is analyzing your question..."
+        ):
+
+            result = agent.answer(
+                question
+            )
+
+        # ----------------------------------------------------
+        # Tool selection
+        # ----------------------------------------------------
+
+        st.subheader(
+            "🧠 Tool Selection"
+        )
+
+        tool = result.get(
+            "tool",
+            "unknown"
+        )
+
+        reason = result.get(
+            "reason",
+            ""
+        )
+
+        tool_names = {
+
+            "sql":
+                "🗄️ SQL Analytics",
+
+            "forecast":
+                "🔮 Forecasting",
+
+            "retrieval":
+                "📚 Document Retrieval",
+
+            "system":
+                "⚙️ System",
+
+            "none":
+                "❌ None"
+        }
 
         st.info(
-            f"Tool selected: **{result['tool']}**"
+            f"**Selected Tool:** "
+            f"{tool_names.get(tool, tool)}"
         )
+
         st.caption(
-            f"Selection reasoning: {result['reason']}"
+            f"**Why:** {reason}"
         )
 
-        if isinstance(result["answer"], pd.DataFrame):
-            st.dataframe(
-                result["answer"],
-                use_container_width=True
-            )
-        else:
-            st.write(result["answer"])
+        # ----------------------------------------------------
+        # Answer
+        # ----------------------------------------------------
 
-        if result.get("sql"):
-            with st.expander("Generated SQL"):
-                st.code(
-                    result["sql"],
-                    language="sql"
+        st.subheader(
+            "💡 Answer"
+        )
+
+        answer = result.get(
+            "answer",
+            ""
+        )
+
+        data = result.get(
+            "data",
+            None
+        )
+
+        # ----------------------------------------------------
+        # Display text answer
+        # ----------------------------------------------------
+
+        if answer:
+
+            st.write(
+                answer
+            )
+
+        # ----------------------------------------------------
+        # Display structured table
+        # ----------------------------------------------------
+
+        if isinstance(
+            data,
+            pd.DataFrame
+        ):
+
+            display_data = (
+                data.copy()
+            )
+
+            # ------------------------------------------------
+            # Format dates
+            # ------------------------------------------------
+
+            for column in display_data.columns:
+
+                if (
+                    "date" in column.lower()
+                    or "week" in column.lower()
+                ):
+
+                    try:
+
+                        display_data[
+                            column
+                        ] = pd.to_datetime(
+                            display_data[
+                                column
+                            ],
+                            errors="coerce"
+                        ).dt.strftime(
+                            "%Y-%m-%d"
+                        )
+
+                    except Exception:
+
+                        pass
+
+            # ------------------------------------------------
+            # Format numbers
+            # ------------------------------------------------
+
+            for column in display_data.columns:
+
+                if pd.api.types.is_numeric_dtype(
+                    display_data[column]
+                ):
+
+                    display_data[
+                        column
+                    ] = (
+                        display_data[
+                            column
+                        ]
+                        .round(2)
+                    )
+
+            # ------------------------------------------------
+            # Rename common columns
+            # ------------------------------------------------
+
+            rename_map = {
+
+                "product_id":
+                    "Department ID",
+
+                "product_name":
+                    "Department",
+
+                "Dept":
+                    "Dept",
+
+                "store_id":
+                    "Store ID",
+
+                "store_name":
+                    "Store",
+
+                "Store":
+                    "Store Number",
+
+                "sales":
+                    "Sales",
+
+                "total_sales":
+                    "Total Sales",
+
+                "average_weekly_sales":
+                    "Avg Weekly Sales",
+
+                "total_revenue":
+                    "Total Revenue",
+
+                "total_units":
+                    "Total Units",
+
+                "promotion_status":
+                    "Promotion Status",
+
+                "average_markdown":
+                    "Average Markdown",
+
+                "maximum_markdown":
+                    "Maximum Markdown"
+            }
+
+            display_data = (
+                display_data
+                .rename(
+                    columns=rename_map
                 )
-
-        if result.get("sources"):
-            st.caption(
-                "Sources: " +
-                ", ".join(result["sources"])
             )
+
+            st.dataframe(
+                display_data,
+                use_container_width=True,
+                hide_index=True
+            )
+
+        # ----------------------------------------------------
+        # Sources
+        # ----------------------------------------------------
+
+        sources = result.get(
+            "sources",
+            []
+        )
+
+        if sources:
+
+            st.subheader(
+                "📚 Sources"
+            )
+
+            for source in sources:
+
+                st.caption(
+                    f"• {source}"
+                )
