@@ -1,329 +1,246 @@
 # ============================================================
-# RetailIQ - Walmart AI Business Agent
-# ============================================================
-#
-# RetailIQ AI Agent
-#
-# Tools:
-#   1. SQL Analytics
-#   2. Demand Forecasting
-#   3. Document Retrieval
-#
-# Dataset:
-#   Walmart Store Sales Forecasting
-#
-# Database:
-#   retailiq.db
-#
+# RetailIQ - Final AI Business Assistant
 # ============================================================
 
-from pathlib import Path
 import os
 import re
-import json
 import sqlite3
+from pathlib import Path
 
 import pandas as pd
-
 from dotenv import load_dotenv
+
+from forecast import forecast
+
+try:
+    from retrieval import Retriever
+except Exception:
+    Retriever = None
 
 
 # ============================================================
-# ENVIRONMENT
+# CONFIGURATION
 # ============================================================
 
 load_dotenv()
 
 DB_PATH = Path("retailiq.db")
 
-GEMINI_API_KEY = os.getenv(
-    "GEMINI_API_KEY",
-    ""
-).strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-GEMINI_MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-2.5-flash"
-).strip()
+retriever = None
 
-
-# ============================================================
-# GEMINI
-# ============================================================
-
-try:
-
-    from google import genai
-
-except ImportError:
-
-    genai = None
+if Retriever is not None:
+    try:
+        retriever = Retriever()
+    except Exception as e:
+        print(f"RAG initialization warning: {e}")
+        retriever = None
 
 
 # ============================================================
-# RETRIEVAL
+# GEMINI INITIALIZATION
 # ============================================================
 
-try:
+gemini_model = None
 
-    from retrieval import Retriever
+if GEMINI_API_KEY:
 
-except ImportError:
+    try:
+        from google import genai
 
-    Retriever = None
+        client = genai.Client(
+            api_key=GEMINI_API_KEY
+        )
+
+        gemini_model = client.models
+
+    except Exception as e:
+        print(
+            f"Gemini initialization warning: {e}"
+        )
 
 
 # ============================================================
-# FORECAST
+# DATABASE CONNECTION
 # ============================================================
 
-try:
+def get_connection():
+    return sqlite3.connect(
+        DB_PATH
+    )
 
-    from forecast import forecast_next_weeks
 
-except ImportError:
+# ============================================================
+# SQL INTENT DETECTION
+# ============================================================
 
-    forecast_next_weeks = None
+def detect_sql_intent(question):
+
+    q = question.lower().strip()
+
+    # --------------------------------------------------------
+    # Store ranking
+    # --------------------------------------------------------
+
+    if (
+        "which store" in q
+        or "best store" in q
+        or "top store" in q
+        or "highest sales store" in q
+        or "store has the highest" in q
+        or (
+            "store" in q
+            and (
+                "highest sales" in q
+                or "most sales" in q
+                or "maximum sales" in q
+            )
+        )
+    ):
+        return "store_performance"
+
+    # --------------------------------------------------------
+    # Department ranking
+    # --------------------------------------------------------
+
+    if (
+        "which department" in q
+        or "best department" in q
+        or "top department" in q
+        or "highest department" in q
+        or (
+            "department" in q
+            and (
+                "highest sales" in q
+                or "most sales" in q
+                or "maximum sales" in q
+            )
+        )
+    ):
+        return "department_performance"
+
+    # --------------------------------------------------------
+    # Store sales
+    # --------------------------------------------------------
+
+    if (
+        "store" in q
+        and (
+            "sales" in q
+            or "revenue" in q
+            or "performance" in q
+        )
+    ):
+        return "store_sales"
+
+    # --------------------------------------------------------
+    # Department sales
+    # --------------------------------------------------------
+
+    if (
+        "department" in q
+        and (
+            "sales" in q
+            or "revenue" in q
+            or "performance" in q
+        )
+    ):
+        return "department_sales"
+
+    # --------------------------------------------------------
+    # Monthly
+    # --------------------------------------------------------
+
+    if (
+        "monthly sales" in q
+        or "sales by month" in q
+        or "month wise sales" in q
+        or "monthly revenue" in q
+    ):
+        return "monthly_sales"
+
+    # --------------------------------------------------------
+    # Holiday
+    # --------------------------------------------------------
+
+    if (
+        "holiday sales" in q
+        or "holiday performance" in q
+        or "sales on holidays" in q
+        or "holiday" in q and "sales" in q
+    ):
+        return "holiday_sales"
+
+    # --------------------------------------------------------
+    # Promotion / markdown
+    # --------------------------------------------------------
+
+    if (
+        "promotion" in q
+        or "promotions" in q
+        or "markdown" in q
+        or "mark down" in q
+    ):
+        return "promotion_sales"
+
+    # --------------------------------------------------------
+    # Data summary
+    # --------------------------------------------------------
+
+    if (
+        "how many rows" in q
+        or "how much data" in q
+        or "data summary" in q
+        or "dataset summary" in q
+        or "number of stores" in q
+        or "number of departments" in q
+        or "date range" in q
+    ):
+        return "data_summary"
+
+    # --------------------------------------------------------
+    # Generic total
+    # --------------------------------------------------------
+
+    if (
+        "total sales" in q
+        or "overall sales" in q
+        or "total revenue" in q
+        or "overall revenue" in q
+    ):
+        return "total_sales"
+
+    return None
 
 
 # ============================================================
 # SQL TOOL
 # ============================================================
 
-class SQLTool:
-    """
-    SQL analytics tool for Walmart data.
-
-    Tables:
-
-        dim_product
-        dim_store
-        fact_transactions
-        fact_weekly_sales
-    """
-
-    def __init__(self):
-
-        self.db_path = DB_PATH
-
-    # --------------------------------------------------------
-    # Check database
-    # --------------------------------------------------------
-
-    def check_database(self):
-
-        if not self.db_path.exists():
-
-            raise FileNotFoundError(
-                "retailiq.db was not found.\n\n"
-                "Please run:\n"
-                "python pipeline.py"
-            )
-
-    # --------------------------------------------------------
-    # Execute SQL
-    # --------------------------------------------------------
-
-    def execute(self, sql):
-
-        self.check_database()
-
-        with sqlite3.connect(
-            self.db_path
-        ) as connection:
-
-            return pd.read_sql_query(
-                sql,
-                connection
-            )
-
-    # --------------------------------------------------------
-    # Products / Departments
-    # --------------------------------------------------------
-
-    def get_products(self):
-
-        sql = """
-        SELECT
-            product_id,
-            product_name,
-            category,
-            Dept
-        FROM dim_product
-        ORDER BY Dept
-        """
-
-        return self.execute(sql)
-
-    # --------------------------------------------------------
-    # Stores
-    # --------------------------------------------------------
-
-    def get_stores(self):
-
-        sql = """
-        SELECT
-            store_id,
-            store_name,
-            Store,
-            store_type,
-            store_size
-        FROM dim_store
-        ORDER BY Store
-        """
-
-        return self.execute(sql)
-
-    # --------------------------------------------------------
-    # Resolve Department
-    # --------------------------------------------------------
-
-    def resolve_product(
-        self,
-        product_text
-    ):
-
-        if not product_text:
-
-            return None
-
-        products = self.get_products()
-
-        search = str(
-            product_text
-        ).strip().lower()
-
-        # Exact ID
-
-        for _, row in products.iterrows():
-
-            if (
-                str(row["product_id"]).lower()
-                == search
-            ):
-
-                return row["product_id"]
-
-        # Exact name
-
-        for _, row in products.iterrows():
-
-            if (
-                str(row["product_name"]).lower()
-                == search
-            ):
-
-                return row["product_id"]
-
-        # Department number
-
-        match = re.search(
-            r"\d+",
-            search
-        )
-
-        if match:
-
-            dept_number = int(
-                match.group(0)
-            )
-
-            for _, row in products.iterrows():
-
-                try:
-
-                    if int(row["Dept"]) == dept_number:
-
-                        return row["product_id"]
-
-                except Exception:
-
-                    pass
-
-        # Partial name
-
-        for _, row in products.iterrows():
-
-            name = str(
-                row["product_name"]
-            ).lower()
-
-            if search in name:
-
-                return row["product_id"]
-
-        return None
-
-    # --------------------------------------------------------
-    # Resolve Store
-    # --------------------------------------------------------
-
-    def resolve_store(
-        self,
-        store_text
-    ):
-
-        if not store_text:
-
-            return None
-
-        stores = self.get_stores()
-
-        search = str(
-            store_text
-        ).strip().lower()
-
-        # Exact ID
-
-        for _, row in stores.iterrows():
-
-            if (
-                str(row["store_id"]).lower()
-                == search
-            ):
-
-                return row["store_id"]
-
-        # Store number
-
-        match = re.search(
-            r"\d+",
-            search
-        )
-
-        if match:
-
-            store_number = int(
-                match.group(0)
-            )
-
-            for _, row in stores.iterrows():
-
-                try:
-
-                    if int(row["Store"]) == store_number:
-
-                        return row["store_id"]
-
-                except Exception:
-
-                    pass
-
-        return None
-
-    # ========================================================
-    # RUN SQL INTENT
-    # ========================================================
-
-    def run_intent(
-        self,
-        intent,
-        top_n=10
-    ):
-
-        intent = str(
-            intent
-        ).lower().strip()
+def run_sql(question):
+
+    intent = detect_sql_intent(
+        question
+    )
+
+    if intent is None:
+
+        return {
+            "tool": "SQL",
+            "reason": (
+                "No matching SQL analytics intent was identified."
+            ),
+            "answer": (
+                "I could not identify the requested business metric."
+            ),
+            "data": None,
+            "sources": []
+        }
+
+    conn = get_connection()
+
+    try:
 
         # ----------------------------------------------------
         # Total sales
@@ -331,130 +248,253 @@ class SQLTool:
 
         if intent == "total_sales":
 
-            sql = """
-            SELECT
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS total_sales
-            FROM fact_weekly_sales
+            query = """
+                SELECT
+                    SUM(Weekly_Sales) AS total_sales
+                FROM fact_transactions
             """
 
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            value = float(
+                df.iloc[0]["total_sales"] or 0
+            )
+
+            answer_text = (
+                f"Total recorded sales are "
+                f"{value:,.2f}."
+            )
+
         # ----------------------------------------------------
-        # Total revenue
+        # Store ranking
         # ----------------------------------------------------
 
-        elif intent == "total_revenue":
+        elif intent == "store_performance":
 
-            sql = """
-            SELECT
-                ROUND(
-                    SUM(revenue),
-                    2
-                ) AS total_revenue,
-
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS total_sales
-
-            FROM fact_weekly_sales
+            query = """
+                SELECT
+                    store_id,
+                    Store,
+                    SUM(Weekly_Sales) AS total_sales
+                FROM fact_transactions
+                GROUP BY store_id, Store
+                ORDER BY total_sales DESC
             """
 
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            if df.empty:
+
+                answer_text = (
+                    "No store sales data was found."
+                )
+
+            else:
+
+                row = df.iloc[0]
+
+                answer_text = (
+                    f"Store {int(row['Store'])} has the "
+                    f"highest total sales with "
+                    f"{row['total_sales']:,.2f}."
+                )
+
         # ----------------------------------------------------
-        # Top departments
+        # Department ranking
         # ----------------------------------------------------
 
-        elif intent == "top_products":
+        elif intent == "department_performance":
 
-            sql = f"""
-            SELECT
-                p.product_id,
-                p.product_name,
-                p.Dept,
-
-                ROUND(
-                    SUM(f.quantity),
-                    2
-                ) AS sales
-
-            FROM fact_weekly_sales f
-
-            LEFT JOIN dim_product p
-                ON f.product_id = p.product_id
-
-            GROUP BY
-                p.product_id,
-                p.product_name,
-                p.Dept
-
-            ORDER BY
-                sales DESC
-
-            LIMIT {int(top_n)}
+            query = """
+                SELECT
+                    product_id,
+                    Dept,
+                    SUM(Weekly_Sales) AS total_sales
+                FROM fact_transactions
+                GROUP BY product_id, Dept
+                ORDER BY total_sales DESC
             """
 
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            if df.empty:
+
+                answer_text = (
+                    "No department sales data was found."
+                )
+
+            else:
+
+                row = df.iloc[0]
+
+                answer_text = (
+                    f"Department {int(row['Dept'])} has the "
+                    f"highest total sales with "
+                    f"{row['total_sales']:,.2f}."
+                )
+
         # ----------------------------------------------------
-        # Store sales
+        # Store-specific sales
         # ----------------------------------------------------
 
         elif intent == "store_sales":
 
-            sql = """
-            SELECT
-                s.store_id,
-                s.store_name,
-                s.Store,
+            match = re.search(
+                r"store\s*(\d+)",
+                question,
+                re.IGNORECASE
+            )
 
-                ROUND(
-                    SUM(f.quantity),
-                    2
-                ) AS sales
+            if match:
 
-            FROM fact_weekly_sales f
+                store_number = int(
+                    match.group(1)
+                )
 
-            LEFT JOIN dim_store s
-                ON f.store_id = s.store_id
+                store_id = (
+                    f"S{store_number:03d}"
+                )
 
-            GROUP BY
-                s.store_id,
-                s.store_name,
-                s.Store
+                query = """
+                    SELECT
+                        store_id,
+                        Store,
+                        SUM(Weekly_Sales) AS total_sales
+                    FROM fact_transactions
+                    WHERE store_id = ?
+                    GROUP BY store_id, Store
+                """
 
-            ORDER BY
-                sales DESC
-            """
+                df = pd.read_sql_query(
+                    query,
+                    conn,
+                    params=[store_id]
+                )
+
+                if df.empty:
+
+                    answer_text = (
+                        f"No data was found for "
+                        f"Store {store_number}."
+                    )
+
+                else:
+
+                    value = float(
+                        df.iloc[0]["total_sales"]
+                    )
+
+                    answer_text = (
+                        f"Store {store_number} has total "
+                        f"sales of {value:,.2f}."
+                    )
+
+            else:
+
+                query = """
+                    SELECT
+                        store_id,
+                        Store,
+                        SUM(Weekly_Sales) AS total_sales
+                    FROM fact_transactions
+                    GROUP BY store_id, Store
+                    ORDER BY total_sales DESC
+                """
+
+                df = pd.read_sql_query(
+                    query,
+                    conn
+                )
+
+                answer_text = (
+                    "Here is the store sales ranking."
+                )
 
         # ----------------------------------------------------
-        # Department sales
+        # Department-specific sales
         # ----------------------------------------------------
 
         elif intent == "department_sales":
 
-            sql = """
-            SELECT
-                p.product_id,
-                p.product_name,
-                p.Dept,
+            match = re.search(
+                r"(?:department|dept)\s*(\d+)",
+                question,
+                re.IGNORECASE
+            )
 
-                ROUND(
-                    SUM(f.quantity),
-                    2
-                ) AS sales
+            if match:
 
-            FROM fact_weekly_sales f
+                dept_number = int(
+                    match.group(1)
+                )
 
-            LEFT JOIN dim_product p
-                ON f.product_id = p.product_id
+                product_id = (
+                    f"D{dept_number:03d}"
+                )
 
-            GROUP BY
-                p.product_id,
-                p.product_name,
-                p.Dept
+                query = """
+                    SELECT
+                        product_id,
+                        Dept,
+                        SUM(Weekly_Sales) AS total_sales
+                    FROM fact_transactions
+                    WHERE product_id = ?
+                    GROUP BY product_id, Dept
+                """
 
-            ORDER BY
-                sales DESC
-            """
+                df = pd.read_sql_query(
+                    query,
+                    conn,
+                    params=[product_id]
+                )
+
+                if df.empty:
+
+                    answer_text = (
+                        f"No data was found for "
+                        f"Department {dept_number}."
+                    )
+
+                else:
+
+                    value = float(
+                        df.iloc[0]["total_sales"]
+                    )
+
+                    answer_text = (
+                        f"Department {dept_number} has total "
+                        f"sales of {value:,.2f}."
+                    )
+
+            else:
+
+                query = """
+                    SELECT
+                        product_id,
+                        Dept,
+                        SUM(Weekly_Sales) AS total_sales
+                    FROM fact_transactions
+                    GROUP BY product_id, Dept
+                    ORDER BY total_sales DESC
+                """
+
+                df = pd.read_sql_query(
+                    query,
+                    conn
+                )
+
+                answer_text = (
+                    "Here is the department sales ranking."
+                )
 
         # ----------------------------------------------------
         # Monthly sales
@@ -462,26 +502,23 @@ class SQLTool:
 
         elif intent == "monthly_sales":
 
-            sql = """
-            SELECT
-                year,
-                month,
-
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS sales
-
-            FROM fact_weekly_sales
-
-            GROUP BY
-                year,
-                month
-
-            ORDER BY
-                year,
-                month
+            query = """
+                SELECT
+                    strftime('%Y-%m', Date) AS month,
+                    SUM(Weekly_Sales) AS total_sales
+                FROM fact_transactions
+                GROUP BY month
+                ORDER BY month
             """
+
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            answer_text = (
+                "Here is the monthly sales breakdown."
+            )
 
         # ----------------------------------------------------
         # Holiday sales
@@ -489,30 +526,50 @@ class SQLTool:
 
         elif intent == "holiday_sales":
 
-            sql = """
-            SELECT
-
-                CASE
-                    WHEN is_holiday = 1
-                    THEN 'Holiday'
-                    ELSE 'Non-Holiday'
-                END AS period,
-
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS sales,
-
-                COUNT(*) AS records
-
-            FROM fact_weekly_sales
-
-            GROUP BY
-                is_holiday
-
-            ORDER BY
-                is_holiday
+            query = """
+                SELECT
+                    IsHoliday,
+                    COUNT(*) AS observations,
+                    SUM(Weekly_Sales) AS total_sales,
+                    AVG(Weekly_Sales) AS average_sales
+                FROM fact_transactions
+                GROUP BY IsHoliday
+                ORDER BY IsHoliday
             """
+
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            if df.empty:
+
+                answer_text = (
+                    "No holiday sales data was found."
+                )
+
+            else:
+
+                holiday_sales = 0.0
+                non_holiday_sales = 0.0
+
+                for _, row in df.iterrows():
+
+                    if int(row["IsHoliday"]) == 1:
+                        holiday_sales = float(
+                            row["total_sales"]
+                        )
+                    else:
+                        non_holiday_sales = float(
+                            row["total_sales"]
+                        )
+
+                answer_text = (
+                    f"Holiday sales were "
+                    f"{holiday_sales:,.2f}, while "
+                    f"non-holiday sales were "
+                    f"{non_holiday_sales:,.2f}."
+                )
 
         # ----------------------------------------------------
         # Promotion / markdown
@@ -520,128 +577,26 @@ class SQLTool:
 
         elif intent == "promotion_sales":
 
-            sql = """
-            SELECT
-
-                CASE
-                    WHEN promotion_rate > 0
-                    THEN 'Markdown'
-                    ELSE 'No Markdown'
-                END AS promotion_status,
-
-                ROUND(
-                    AVG(quantity),
-                    2
-                ) AS average_weekly_sales,
-
-                COUNT(*) AS weeks
-
-            FROM fact_weekly_sales
-
-            GROUP BY
-                promotion_status
-
-            ORDER BY
-                promotion_status
+            query = """
+                SELECT
+                    promotion_flag,
+                    COUNT(*) AS observations,
+                    SUM(Weekly_Sales) AS total_sales,
+                    AVG(Weekly_Sales) AS average_sales
+                FROM fact_transactions
+                GROUP BY promotion_flag
+                ORDER BY promotion_flag
             """
 
-        # ----------------------------------------------------
-        # Store performance
-        # ----------------------------------------------------
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
 
-        elif intent == "store_performance":
-
-            sql = """
-            SELECT
-
-                s.store_id,
-                s.store_name,
-                s.store_type,
-                s.store_size,
-
-                ROUND(
-                    SUM(f.quantity),
-                    2
-                ) AS total_sales,
-
-                ROUND(
-                    AVG(f.quantity),
-                    2
-                ) AS average_weekly_sales
-
-            FROM fact_weekly_sales f
-
-            LEFT JOIN dim_store s
-                ON f.store_id = s.store_id
-
-            GROUP BY
-                s.store_id,
-                s.store_name,
-                s.store_type,
-                s.store_size
-
-            ORDER BY
-                total_sales DESC
-            """
-
-        # ----------------------------------------------------
-        # Department performance
-        # ----------------------------------------------------
-
-        elif intent == "department_performance":
-
-            sql = """
-            SELECT
-
-                p.product_id,
-                p.product_name,
-                p.category,
-
-                ROUND(
-                    SUM(f.quantity),
-                    2
-                ) AS total_sales,
-
-                ROUND(
-                    AVG(f.quantity),
-                    2
-                ) AS average_weekly_sales
-
-            FROM fact_weekly_sales f
-
-            LEFT JOIN dim_product p
-                ON f.product_id = p.product_id
-
-            GROUP BY
-                p.product_id,
-                p.product_name,
-                p.category
-
-            ORDER BY
-                total_sales DESC
-            """
-
-        # ----------------------------------------------------
-        # Markdown
-        # ----------------------------------------------------
-
-        elif intent == "markdown":
-
-            sql = """
-            SELECT
-
-                ROUND(
-                    AVG(markdown_value),
-                    2
-                ) AS average_markdown,
-
-                ROUND(
-                    MAX(markdown_value),
-                    2
-                ) AS maximum_markdown
-
-            FROM fact_weekly_sales
-            """
+            answer_text = (
+                "Here is the sales breakdown for "
+                "promoted and non-promoted observations."
+            )
 
         # ----------------------------------------------------
         # Data summary
@@ -649,1318 +604,937 @@ class SQLTool:
 
         elif intent == "data_summary":
 
-            sql = """
-            SELECT
-
-                COUNT(*) AS weekly_records,
-
-                COUNT(
-                    DISTINCT product_id
-                ) AS departments,
-
-                COUNT(
-                    DISTINCT store_id
-                ) AS stores,
-
-                MIN(week_start)
-                    AS first_week,
-
-                MAX(week_start)
-                    AS last_week,
-
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS total_sales
-
-            FROM fact_weekly_sales
+            query = """
+                SELECT
+                    COUNT(*) AS rows_count,
+                    COUNT(DISTINCT Store) AS stores,
+                    COUNT(DISTINCT Dept) AS departments,
+                    MIN(Date) AS start_date,
+                    MAX(Date) AS end_date,
+                    SUM(Weekly_Sales) AS total_sales
+                FROM fact_transactions
             """
 
-        # ----------------------------------------------------
-        # Default
-        # ----------------------------------------------------
+            df = pd.read_sql_query(
+                query,
+                conn
+            )
+
+            row = df.iloc[0]
+
+            answer_text = (
+                f"The dataset contains "
+                f"{int(row['rows_count']):,} weekly observations "
+                f"across {int(row['stores'])} stores and "
+                f"{int(row['departments'])} departments, "
+                f"covering {row['start_date']} to "
+                f"{row['end_date']}. "
+                f"Total recorded sales are "
+                f"{row['total_sales']:,.2f}."
+            )
 
         else:
 
-            sql = """
-            SELECT
+            df = pd.DataFrame()
 
-                ROUND(
-                    SUM(revenue),
-                    2
-                ) AS total_revenue,
+            answer_text = (
+                "SQL analysis could not be completed."
+            )
 
-                ROUND(
-                    SUM(quantity),
-                    2
-                ) AS total_sales
+        return {
+            "tool": "SQL",
+            "reason": (
+                f"SQL analytics selected for the "
+                f"'{intent}' business question."
+            ),
+            "answer": answer_text,
+            "data": df,
+            "sources": []
+        }
 
-            FROM fact_weekly_sales
-            """
+    finally:
 
-        result = self.execute(
-            sql
-        )
-
-        return result, sql
+        conn.close()
 
 
 # ============================================================
 # FORECAST TOOL
 # ============================================================
 
-class ForecastTool:
-
-    def __init__(self):
-
-        self.db_path = DB_PATH
-
-    def run(
-        self,
-        product_id,
-        store_id,
-        horizon=4
-    ):
-
-        if not self.db_path.exists():
-
-            raise FileNotFoundError(
-                "retailiq.db not found. "
-                "Run pipeline.py first."
-            )
-
-        if forecast_next_weeks is None:
-
-            raise ImportError(
-                "forecast.py could not be imported."
-            )
-
-        with sqlite3.connect(
-            self.db_path
-        ) as connection:
-
-            weekly = pd.read_sql_query(
-                """
-                SELECT *
-                FROM fact_weekly_sales
-                """,
-                connection
-            )
-
-        # Compatibility
-
-        if (
-            "promotion_rate"
-            not in weekly.columns
-        ):
-
-            if "promotion_flag" in weekly.columns:
-
-                weekly["promotion_rate"] = (
-                    weekly["promotion_flag"]
-                )
-
-            else:
-
-                weekly["promotion_rate"] = 0
-
-        return forecast_next_weeks(
-            weekly,
-            product_id,
-            store_id,
-            horizon
-        )
-
-
-# ============================================================
-# GEMINI PLANNER
-# ============================================================
-
-class GeminiPlanner:
-
-    def __init__(self):
-
-        self.api_key = GEMINI_API_KEY
-
-        self.model_name = GEMINI_MODEL
-
-        self.enabled = (
-            bool(self.api_key)
-            and genai is not None
-        )
-
-        self.client = None
-
-        if self.enabled:
-
-            try:
-
-                self.client = genai.Client(
-                    api_key=self.api_key
-                )
-
-            except Exception as error:
-
-                print(
-                    "Gemini initialization error:",
-                    error
-                )
-
-                self.enabled = False
+def run_forecast(question):
 
     # --------------------------------------------------------
-    # Plan
+    # Department extraction
     # --------------------------------------------------------
 
-    def plan(
-        self,
+    dept_match = re.search(
+        r"(?:department|dept)\s*(\d+)",
         question,
-        products=None,
-        stores=None
-    ):
-
-        if not self.enabled:
-
-            return None
-
-        product_context = ""
-
-        if products is not None:
-
-            for _, row in products.head(100).iterrows():
-
-                product_context += (
-                    f"{row['product_id']} = "
-                    f"{row['product_name']} "
-                    f"(Department {row['Dept']})\n"
-                )
-
-        store_context = ""
-
-        if stores is not None:
-
-            for _, row in stores.head(100).iterrows():
-
-                store_context += (
-                    f"{row['store_id']} = "
-                    f"{row['store_name']} "
-                    f"(Store {row['Store']})\n"
-                )
-
-        prompt = f"""
-You are the planning component of RetailIQ.
-
-You have exactly three tools.
-
-TOOL 1: sql
-Use for historical business analytics.
-
-TOOL 2: forecast
-Use for future demand or sales prediction.
-
-TOOL 3: retrieval
-Use for internal company documents,
-policies, SOPs, inventory rules,
-return policies, supplier terms,
-and markdown rules.
-
-WALMART DATASET:
-
-Store = store
-Dept = department/product group
-Weekly_Sales = weekly sales
-IsHoliday = holiday indicator
-MarkDown1-5 = markdown information
-Temperature = temperature
-Fuel_Price = fuel price
-CPI = CPI
-Unemployment = unemployment
-
-IMPORTANT:
-
-Return ONLY valid JSON.
-
-Use this format:
-
-{{
-    "tool": "sql",
-    "reason": "short explanation",
-    "intent": "total_revenue",
-    "product_id": null,
-    "store_id": null,
-    "horizon": 4,
-    "top_n": 10
-}}
-
-Allowed SQL intents:
-
-total_sales
-total_revenue
-top_products
-store_sales
-department_sales
-monthly_sales
-holiday_sales
-promotion_sales
-store_performance
-department_performance
-markdown
-data_summary
-
-Available departments:
-
-{product_context}
-
-Available stores:
-
-{store_context}
-
-User question:
-
-{question}
-"""
-
-        try:
-
-            response = (
-                self.client
-                .models
-                .generate_content(
-                    model=self.model_name,
-                    contents=prompt
-                )
-            )
-
-            text = response.text.strip()
-
-            text = re.sub(
-                r"^```json\s*",
-                "",
-                text,
-                flags=re.I
-            )
-
-            text = re.sub(
-                r"\s*```$",
-                "",
-                text
-            )
-
-            plan = json.loads(
-                text
-            )
-
-            if not isinstance(
-                plan,
-                dict
-            ):
-
-                return None
-
-            if plan.get("tool") not in [
-                "sql",
-                "forecast",
-                "retrieval"
-            ]:
-
-                return None
-
-            return plan
-
-        except Exception as error:
-
-            print(
-                "Gemini planning error:",
-                error
-            )
-
-            return None
+        re.IGNORECASE
+    )
 
     # --------------------------------------------------------
-    # Retrieval answer
+    # Store extraction
     # --------------------------------------------------------
 
-    def generate_answer(
-        self,
+    store_match = re.search(
+        r"store\s*(\d+)",
         question,
-        context
-    ):
+        re.IGNORECASE
+    )
 
-        if not self.enabled:
+    # --------------------------------------------------------
+    # Explicit number of weeks
+    # --------------------------------------------------------
 
-            return None
+    weeks_match = re.search(
+        r"(\d+)\s*weeks?",
+        question,
+        re.IGNORECASE
+    )
 
-        prompt = f"""
-You are RetailIQ's business assistant.
-
-Answer the question using ONLY the
-provided internal documentation.
-
-Do not invent information.
-
-Question:
-
-{question}
-
-Internal documentation:
-
-{context}
-
-Give a concise business-friendly answer.
-"""
-
-        try:
-
-            response = (
-                self.client
-                .models
-                .generate_content(
-                    model=self.model_name,
-                    contents=prompt
-                )
-            )
-
-            return response.text.strip()
-
-        except Exception as error:
-
-            print(
-                "Gemini answer error:",
-                error
-            )
-
-            return None
-
-
-# ============================================================
-# RETAILIQ AGENT
-# ============================================================
-
-class RetailIQAgent:
-
-    def __init__(self):
-
-        self.sql_tool = SQLTool()
-
-        self.forecast_tool = ForecastTool()
-
-        self.retriever = (
-            Retriever()
-            if Retriever is not None
-            else None
-        )
-
-        self.gemini = GeminiPlanner()
-
-    # ========================================================
-    # FALLBACK PLANNER
-    # ========================================================
-
-    def fallback_plan(
-        self,
-        question
-    ):
-
-        q = question.lower()
-
-        # ----------------------------------------------------
-        # Retrieval
-        # ----------------------------------------------------
-
-        retrieval_words = [
-            "policy",
-            "policies",
-            "return",
-            "returns",
-            "supplier",
-            "sop",
-            "procedure",
-            "inventory policy",
-            "markdown rule",
-            "rules"
-        ]
-
-        if any(
-            word in q
-            for word in retrieval_words
-        ):
-
-            return {
-                "tool": "retrieval",
-                "reason":
-                    "The question asks about an internal policy or procedure."
-            }
-
-        # ----------------------------------------------------
-        # Forecast
-        # ----------------------------------------------------
-
-        forecast_words = [
-            "forecast",
-            "forecasting",
-            "predict",
-            "prediction",
-            "future demand",
-            "expected demand",
-            "next week",
-            "next weeks",
-            "next month",
-            "future sales",
-            "will sell"
-        ]
-
-        if any(
-            word in q
-            for word in forecast_words
-        ):
-
-            return {
-                "tool": "forecast",
-                "reason":
-                    "The question asks for future sales or demand."
-            }
-
-        # ----------------------------------------------------
-        # SQL
-        # ----------------------------------------------------
-
-        if (
-            "top" in q
-            and (
-                "department" in q
-                or "product" in q
-            )
-        ):
-
-            intent = "top_products"
-
-        elif (
-            "highest" in q
-            and "store" in q
-        ):
-
-            intent = "store_sales"
-
-        elif (
-            "best" in q
-            and "store" in q
-        ):
-
-            intent = "store_sales"
-
-        elif (
-            "monthly" in q
-            or "month" in q
-        ):
-
-            intent = "monthly_sales"
-
-        elif (
-            "holiday" in q
-            or "holidays" in q
-        ):
-
-            intent = "holiday_sales"
-
-        elif (
-            "promotion" in q
-            or "promotions" in q
-            or "markdown" in q
-        ):
-
-            intent = "promotion_sales"
-
-        elif (
-            "department" in q
-            and (
-                "sales" in q
-                or "performance" in q
-            )
-        ):
-
-            intent = "department_performance"
-
-        elif (
-            "store" in q
-            and "sales" in q
-        ):
-
-            intent = "store_sales"
-
-        elif (
-            "summary" in q
-            or "dataset" in q
-            or "data coverage" in q
-        ):
-
-            intent = "data_summary"
-
-        elif (
-            "sales" in q
-            or "revenue" in q
-        ):
-
-            intent = "total_revenue"
-
-        else:
-
-            intent = "total_revenue"
+    if not dept_match:
 
         return {
-            "tool": "sql",
-            "reason":
-                "The question asks for historical business analytics.",
-            "intent": intent
+            "tool": "FORECAST",
+            "reason": (
+                "The forecast request does not specify "
+                "a department."
+            ),
+            "answer": (
+                "Please specify a department, for example "
+                "'Department 1'."
+            ),
+            "data": None,
+            "sources": []
         }
 
-    # ========================================================
-    # EXTRACT DEPARTMENT
-    # ========================================================
+    if not store_match:
 
-    def extract_product(
-        self,
-        question,
-        products
-    ):
+        return {
+            "tool": "FORECAST",
+            "reason": (
+                "The forecast request does not specify "
+                "a store."
+            ),
+            "answer": (
+                "Please specify a store, for example "
+                "'Store 1'."
+            ),
+            "data": None,
+            "sources": []
+        }
 
-        # D001
+    department_number = int(
+        dept_match.group(1)
+    )
 
-        match = re.search(
-            r"\bD\d+\b",
+    store_number = int(
+        store_match.group(1)
+    )
+
+    product_id = (
+        f"D{department_number:03d}"
+    )
+
+    store_id = (
+        f"S{store_number:03d}"
+    )
+
+    # --------------------------------------------------------
+    # Determine horizon correctly
+    # --------------------------------------------------------
+
+    q = question.lower()
+
+    if weeks_match:
+
+        horizon = int(
+            weeks_match.group(1)
+        )
+
+    elif "next week" in q:
+
+        horizon = 1
+
+    elif "next month" in q:
+
+        horizon = 4
+
+    else:
+
+        horizon = 4
+
+    # Safety limit
+    horizon = max(
+        1,
+        min(horizon, 52)
+    )
+
+    # --------------------------------------------------------
+    # Run forecast
+    # --------------------------------------------------------
+
+    result = forecast(
+        product_id=product_id,
+        store_id=store_id,
+        horizon=horizon,
+        db_path="retailiq.db"
+    )
+
+    # --------------------------------------------------------
+    # Build clean answer
+    # --------------------------------------------------------
+
+    if horizon == 1:
+
+        heading = (
+            f"Sales forecast for Department "
+            f"{department_number} in Store "
+            f"{store_number}:"
+        )
+
+    else:
+
+        heading = (
+            f"Sales forecast for Department "
+            f"{department_number} in Store "
+            f"{store_number} for the next "
+            f"{horizon} weeks:"
+        )
+
+    lines = [heading]
+
+    for _, row in result.iterrows():
+
+        date = pd.to_datetime(
+            row["week_start"]
+        ).strftime("%Y-%m-%d")
+
+        quantity = float(
+            row["forecast_quantity"]
+        )
+
+        lines.append(
+            f"{date}: {quantity:,.2f} units"
+        )
+
+    return {
+        "tool": "FORECAST",
+        "reason": (
+            "Forecast tool selected because the "
+            "question asks for future demand."
+        ),
+        "answer": "\n".join(lines),
+        "data": result,
+        "sources": []
+    }
+
+
+# ============================================================
+# RETRIEVAL DETECTION
+# ============================================================
+
+def is_retrieval_question(question):
+
+    q = question.lower()
+
+    retrieval_words = [
+        "policy",
+        "policies",
+        "sop",
+        "procedure",
+        "procedures",
+        "supplier terms",
+        "supplier",
+        "returns policy",
+        "return policy",
+        "markdown policy",
+        "inventory policy",
+        "inventory rule",
+        "stockout policy",
+        "stockout procedure",
+        "what does the policy say",
+        "according to the policy",
+        "according to our policy",
+        "internal documentation",
+        "internal procedure",
+        "how should staff"
+    ]
+
+    return any(
+        word in q
+        for word in retrieval_words
+    )
+
+
+# ============================================================
+# RETRIEVAL TOOL
+# ============================================================
+
+def run_retrieval(question):
+
+    if retriever is None:
+
+        return {
+            "tool": "RETRIEVAL",
+            "reason": (
+                "Retrieval was selected because the "
+                "question concerns internal documentation, "
+                "but the RAG system is unavailable."
+            ),
+            "answer": (
+                "The knowledge-base retrieval system is "
+                "not available. Please run "
+                "'python build_rag.py'."
+            ),
+            "data": None,
+            "sources": []
+        }
+
+    # --------------------------------------------------------
+    # Retrieve
+    # --------------------------------------------------------
+
+    try:
+
+        results = retriever.search(
             question,
-            re.I
+            top_k=5
         )
 
-        if match:
+    except Exception as e:
 
-            return (
-                self.sql_tool
-                .resolve_product(
-                    match.group(0)
-                )
-            )
+        return {
+            "tool": "RETRIEVAL",
+            "reason": "Retrieval execution failed.",
+            "answer": (
+                f"Retrieval failed: "
+                f"{type(e).__name__}: {e}"
+            ),
+            "data": None,
+            "sources": []
+        }
 
-        # Department 1
+    if not results:
 
-        match = re.search(
-            r"\bdepartment\s+(\d+)\b",
-            question,
-            re.I
-        )
+        return {
+            "tool": "RETRIEVAL",
+            "reason": (
+                "No relevant knowledge-base evidence "
+                "was retrieved."
+            ),
+            "answer": (
+                "I could not find relevant information "
+                "in the RetailIQ knowledge base."
+            ),
+            "data": None,
+            "sources": []
+        }
 
-        if match:
+    # --------------------------------------------------------
+    # Normalize retrieved results
+    # --------------------------------------------------------
 
-            return (
-                self.sql_tool
-                .resolve_product(
-                    match.group(1)
-                )
-            )
+    evidence = []
 
-        # Dept 1
+    for item in results:
 
-        match = re.search(
-            r"\bdept\s+(\d+)\b",
-            question,
-            re.I
-        )
+        if not isinstance(
+            item,
+            dict
+        ):
+            continue
 
-        if match:
-
-            return (
-                self.sql_tool
-                .resolve_product(
-                    match.group(1)
-                )
-            )
-
-        # Product names
-
-        q = question.lower()
-
-        for _, row in products.iterrows():
-
-            name = str(
-                row["product_name"]
-            ).lower()
-
-            if name in q:
-
-                return row["product_id"]
-
-        return None
-
-    # ========================================================
-    # EXTRACT STORE
-    # ========================================================
-
-    def extract_store(
-        self,
-        question,
-        stores
-    ):
-
-        # S001
-
-        match = re.search(
-            r"\bS\d+\b",
-            question,
-            re.I
-        )
-
-        if match:
-
-            return (
-                self.sql_tool
-                .resolve_store(
-                    match.group(0)
-                )
-            )
-
-        # Store 1
-
-        match = re.search(
-            r"\bstore\s+(\d+)\b",
-            question,
-            re.I
-        )
-
-        if match:
-
-            return (
-                self.sql_tool
-                .resolve_store(
-                    match.group(1)
-                )
-            )
-
-        return None
-
-    # ========================================================
-    # MAIN ANSWER
-    # ========================================================
-
-    def answer(
-        self,
-        question
-    ):
-
-        question = str(
-            question
-        ).strip()
-
-        if not question:
-
-            return {
-                "tool": "none",
-                "reason": "No question provided.",
-                "answer":
-                    "Please enter a question.",
-                "data": None,
-                "sources": []
-            }
-
-        # ----------------------------------------------------
-        # Load metadata
-        # ----------------------------------------------------
-
-        try:
-
-            products = (
-                self.sql_tool
-                .get_products()
-            )
-
-            stores = (
-                self.sql_tool
-                .get_stores()
-            )
-
-        except Exception as error:
-
-            return {
-                "tool": "system",
-                "reason":
-                    "Database could not be loaded.",
-                "answer": str(error),
-                "data": None,
-                "sources": []
-            }
-
-        # ----------------------------------------------------
-        # Gemini planner
-        # ----------------------------------------------------
-
-        plan = self.gemini.plan(
-            question,
-            products,
-            stores
-        )
-
-        # ----------------------------------------------------
-        # Fallback
-        # ----------------------------------------------------
-
-        if not plan:
-
-            plan = self.fallback_plan(
-                question
-            )
-
-        tool = str(
-            plan.get(
-                "tool",
-                "sql"
-            )
-        ).lower().strip()
-
-        reason = plan.get(
-            "reason",
-            "RetailIQ selected the appropriate business tool."
-        )
-
-        # ====================================================
-        # RETRIEVAL
-        # ====================================================
-
-        if tool == "retrieval":
-
-            if self.retriever is None:
-
-                return {
-                    "tool": "retrieval",
-                    "reason": reason,
-                    "answer":
-                        "Retrieval system is not available.",
-                    "data": None,
-                    "sources": []
-                }
-
-            try:
-
-                hits = (
-                    self.retriever
-                    .search(question)
-                )
-
-            except Exception as error:
-
-                return {
-                    "tool": "retrieval",
-                    "reason": reason,
-                    "answer":
-                        f"Retrieval failed: {error}",
-                    "data": None,
-                    "sources": []
-                }
-
-            if not hits:
-
-                return {
-                    "tool": "retrieval",
-                    "reason": reason,
-                    "answer":
-                        "No matching internal document was found.",
-                    "data": None,
-                    "sources": []
-                }
-
-            context_parts = []
-
-            sources = []
-
-            for hit in hits:
-
-                document = hit.get(
-                    "document",
-                    "Unknown document"
-                )
-
-                text = hit.get(
+        content = str(
+            item.get(
+                "content",
+                item.get(
                     "text",
                     ""
                 )
-
-                context_parts.append(
-                    f"SOURCE: {document}\n{text}"
-                )
-
-                sources.append(
-                    document
-                )
-
-            context = "\n\n".join(
-                context_parts
             )
+        ).strip()
 
-            answer = (
-                self.gemini
-                .generate_answer(
-                    question,
-                    context
+        if not content:
+            continue
+
+        source = str(
+            item.get(
+                "source",
+                item.get(
+                    "document",
+                    "knowledge_base.csv"
                 )
             )
+        )
 
-            if not answer:
+        title = str(
+            item.get(
+                "document_title",
+                source
+            )
+        )
 
-                answer = hits[0].get(
-                    "text",
-                    "No answer found."
-                )
+        section = str(
+            item.get(
+                "section",
+                ""
+            )
+        )
 
-            return {
-                "tool": "retrieval",
-                "reason": reason,
-                "answer": answer,
-                "data": None,
-                "sources": list(
-                    dict.fromkeys(
-                        sources
-                    )
-                )
+        topic = str(
+            item.get(
+                "topic",
+                ""
+            )
+        )
+
+        score = float(
+            item.get(
+                "score",
+                0
+            )
+        )
+
+        evidence.append(
+            {
+                "content": content,
+                "source": source,
+                "title": title,
+                "section": section,
+                "topic": topic,
+                "score": score
             }
+        )
 
-        # ====================================================
-        # FORECAST
-        # ====================================================
+    if not evidence:
 
-        if tool == "forecast":
+        return {
+            "tool": "RETRIEVAL",
+            "reason": (
+                "Retrieved records did not contain "
+                "usable evidence."
+            ),
+            "answer": (
+                "Relevant records were found, but no "
+                "usable policy text was available."
+            ),
+            "data": None,
+            "sources": []
+        }
 
-            product_id = plan.get(
-                "product_id"
+    # --------------------------------------------------------
+    # Remove duplicate documents
+    # --------------------------------------------------------
+
+    unique_evidence = []
+
+    seen = set()
+
+    for item in evidence:
+
+        key = (
+            item["source"],
+            item["section"],
+            item["content"]
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        unique_evidence.append(
+            item
+        )
+
+    evidence = unique_evidence
+
+    # --------------------------------------------------------
+    # Select the strongest relevant evidence
+    #
+    # Prefer the best result from each document, but keep
+    # the context concise.
+    # --------------------------------------------------------
+
+    evidence.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    primary = evidence[0]
+
+    selected = [
+        primary
+    ]
+
+    primary_source = primary["source"]
+
+    # Add another chunk only if it is from the same
+    # document or has a very strong retrieval score.
+    for item in evidence[1:]:
+
+        if item["source"] == primary_source:
+
+            selected.append(
+                item
             )
 
-            store_id = plan.get(
-                "store_id"
+        elif (
+            len(selected) < 3
+            and item["score"] >= primary["score"] * 0.90
+        ):
+
+            selected.append(
+                item
             )
 
-            # ------------------------------------------------
-            # Resolve product
-            # ------------------------------------------------
+        if len(selected) >= 3:
+            break
 
-            if product_id:
+    # --------------------------------------------------------
+    # Build context
+    # --------------------------------------------------------
 
-                resolved = (
-                    self.sql_tool
-                    .resolve_product(
-                        product_id
-                    )
-                )
+    context_parts = []
 
-                if resolved:
+    for item in selected:
 
-                    product_id = resolved
+        context_parts.append(
+            f"""
+SOURCE: {item['source']}
+DOCUMENT: {item['title']}
+SECTION: {item['section']}
+TOPIC: {item['topic']}
 
-            if not product_id:
+{item['content']}
+""".strip()
+        )
 
-                product_id = (
-                    self.extract_product(
-                        question,
-                        products
-                    )
-                )
+    context = "\n\n---\n\n".join(
+        context_parts
+    )
 
-            # ------------------------------------------------
-            # Resolve store
-            # ------------------------------------------------
+    # --------------------------------------------------------
+    # Gemini synthesis
+    # --------------------------------------------------------
 
-            if store_id:
+    answer_text = None
 
-                resolved = (
-                    self.sql_tool
-                    .resolve_store(
-                        store_id
-                    )
-                )
+    if gemini_model is not None:
 
-                if resolved:
+        prompt = f"""
+You are the RetailIQ internal business assistant.
 
-                    store_id = resolved
+Answer the user's question using ONLY the supplied
+RetailIQ knowledge-base evidence.
 
-            if not store_id:
+USER QUESTION:
+{question}
 
-                store_id = (
-                    self.extract_store(
-                        question,
-                        stores
-                    )
-                )
+KNOWLEDGE-BASE EVIDENCE:
+{context}
 
-            # ------------------------------------------------
-            # Product missing
-            # ------------------------------------------------
+RULES:
+1. Do not invent facts.
+2. Do not use outside knowledge.
+3. Do not reproduce the entire retrieved document.
+4. Give a concise professional answer.
+5. Use 2 to 5 sentences unless a formula or short
+   bullet list improves clarity.
+6. Preserve important policy rules and formulas.
+7. If required information is unavailable, explicitly
+   say that it is unavailable.
+8. Do not mention irrelevant evidence.
+9. These are synthetic RetailIQ project policies,
+   not actual Walmart internal policies.
+10. Cite the most relevant document.
+11. If a section is relevant, include the section name.
 
-            if not product_id:
+Use this exact citation format at the end:
 
-                return {
-                    "tool": "forecast",
-                    "reason": reason,
-                    "answer":
-                        "Please specify a department.\n\n"
-                        "Example:\n"
-                        "Forecast Department 1 for Store 1 "
-                        "for the next 4 weeks.",
-                    "data": None,
-                    "sources": []
-                }
+Source: <document filename> | Section: <section>
 
-            # ------------------------------------------------
-            # Store missing
-            # ------------------------------------------------
+Return only the final answer.
+"""
 
-            if not store_id:
+        try:
 
-                return {
-                    "tool": "forecast",
-                    "reason": reason,
-                    "answer":
-                        "Please specify a store.\n\n"
-                        "Example:\n"
-                        "Forecast Department 1 for Store 1 "
-                        "for the next 4 weeks.",
-                    "data": None,
-                    "sources": []
-                }
-
-            # ------------------------------------------------
-            # Horizon
-            # ------------------------------------------------
-
-            try:
-
-                horizon = int(
-                    plan.get(
-                        "horizon",
-                        4
-                    )
-                )
-
-            except Exception:
-
-                horizon = 4
-
-            horizon = min(
-                max(
-                    horizon,
-                    1
-                ),
-                12
+            response = gemini_model.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
             )
 
-            # ------------------------------------------------
-            # Generate forecast
-            # ------------------------------------------------
-
-            try:
-
-                forecast_result = (
-                    self.forecast_tool
-                    .run(
-                        product_id,
-                        store_id,
-                        horizon
-                    )
-                )
-
-            except Exception as error:
-
-                return {
-                    "tool": "forecast",
-                    "reason": reason,
-                    "answer":
-                        f"Forecast could not be generated: {error}",
-                    "data": None,
-                    "sources": []
-                }
-
-            # ------------------------------------------------
-            # Clean forecast DataFrame
-            # ------------------------------------------------
-
-            if isinstance(
-                forecast_result,
-                pd.DataFrame
-            ):
-
-                forecast_df = (
-                    forecast_result
-                    .copy()
-                )
-
-                if "week_start" in forecast_df.columns:
-
-                    forecast_df[
-                        "week_start"
-                    ] = pd.to_datetime(
-                        forecast_df[
-                            "week_start"
-                        ],
-                        errors="coerce"
-                    ).dt.strftime(
-                        "%Y-%m-%d"
-                    )
-
-                for column in forecast_df.columns:
-
-                    if (
-                        column != "week_start"
-                        and pd.api.types.is_numeric_dtype(
-                            forecast_df[column]
-                        )
-                    ):
-
-                        forecast_df[column] = (
-                            forecast_df[column]
-                            .round(2)
-                        )
-
-            else:
-
-                forecast_df = None
-
-            answer = (
-                f"Forecast generated successfully.\n\n"
-                f"Department: {product_id}\n"
-                f"Store: {store_id}\n"
-                f"Horizon: {horizon} weeks"
+            answer_text = getattr(
+                response,
+                "text",
+                None
             )
 
-            return {
-                "tool": "forecast",
-                "reason": reason,
-                "answer": answer,
-                "data": forecast_df,
-                "sources": []
-            }
+        except Exception as e:
 
-        # ====================================================
-        # SQL
-        # ====================================================
-
-        if tool == "sql":
-
-            intent = plan.get(
-                "intent",
-                "total_revenue"
+            print(
+                f"Gemini RAG synthesis warning: {e}"
             )
 
-            try:
+    # --------------------------------------------------------
+    # Fallback without Gemini
+    # --------------------------------------------------------
 
-                top_n = int(
-                    plan.get(
-                        "top_n",
-                        10
-                    )
-                )
+    if not answer_text:
 
-            except Exception:
+        answer_text = (
+            f"{primary['content']}\n\n"
+            f"Source: {primary['source']} "
+            f"| Section: {primary['section']}"
+        )
 
-                top_n = 10
+    # --------------------------------------------------------
+    # Sources
+    # --------------------------------------------------------
 
-            top_n = min(
-                max(
-                    top_n,
-                    1
-                ),
-                50
+    sources = []
+
+    for item in selected:
+
+        citation = item["source"]
+
+        if item["section"]:
+
+            citation = (
+                f"{citation} | "
+                f"Section: {item['section']}"
             )
 
-            try:
+        if citation not in sources:
 
-                result, sql = (
-                    self.sql_tool
-                    .run_intent(
-                        intent,
-                        top_n
-                    )
-                )
+            sources.append(
+                citation
+            )
 
-            except Exception as error:
+    return {
+        "tool": "RETRIEVAL",
+        "reason": (
+            "Retrieval tool selected because the "
+            "question concerns internal RetailIQ "
+            "policies or procedures."
+        ),
+        "answer": answer_text.strip(),
+        "data": None,
+        "sources": sources
+    }
 
-                return {
-                    "tool": "sql",
-                    "reason": reason,
-                    "answer":
-                        f"SQL execution failed: {error}",
-                    "data": None,
-                    "sources": []
-                }
 
-            # ------------------------------------------------
-            # Generate short text answer
-            # ------------------------------------------------
+# ============================================================
+# TOOL PLANNER
+# ============================================================
 
-            answer = None
+def choose_tool(question):
 
-            if (
-                self.gemini.enabled
-                and not result.empty
-            ):
+    # --------------------------------------------------------
+    # Forecast first
+    # --------------------------------------------------------
 
-                try:
+    if is_forecast_question(
+        question
+    ):
 
-                    result_text = (
-                        result
-                        .head(20)
-                        .to_string(
-                            index=False
-                        )
-                    )
+        return (
+            "forecast",
+            "The question asks for future demand or sales."
+        )
 
-                    prompt = f"""
-You are RetailIQ.
+    # --------------------------------------------------------
+    # Retrieval second
+    # --------------------------------------------------------
 
-Answer this business question
-using ONLY the SQL result.
+    if is_retrieval_question(
+        question
+    ):
 
-Do not invent values.
+        return (
+            "retrieval",
+            "The question concerns internal policies or procedures."
+        )
+
+    # --------------------------------------------------------
+    # SQL third
+    # --------------------------------------------------------
+
+    sql_intent = detect_sql_intent(
+        question
+    )
+
+    if sql_intent is not None:
+
+        return (
+            "sql",
+            f"The question requests historical database analytics: {sql_intent}."
+        )
+
+    # --------------------------------------------------------
+    # Gemini planner for ambiguous questions
+    # --------------------------------------------------------
+
+    if gemini_model is not None:
+
+        prompt = f"""
+You are the planner for RetailIQ.
+
+Choose exactly ONE tool:
+
+SQL
+FORECAST
+RETRIEVAL
+
+SQL:
+Historical sales, totals, rankings, store analysis,
+department analysis, monthly analysis, holidays,
+promotions, and database metrics.
+
+FORECAST:
+Future demand or sales predictions.
+
+RETRIEVAL:
+Internal policies, SOPs, supplier terms,
+inventory rules, markdown rules, returns procedures,
+and internal documentation.
 
 Question:
 {question}
 
-SQL result:
-{result_text}
-
-Give a short, clear business answer.
-Do not reproduce the entire table.
+Return only:
+SQL
+FORECAST
+or
+RETRIEVAL
 """
 
-                    response = (
-                        self.gemini
-                        .client
-                        .models
-                        .generate_content(
-                            model=self.gemini.model_name,
-                            contents=prompt
-                        )
-                    )
+        try:
 
-                    answer = (
-                        response.text
-                        .strip()
-                    )
+            response = gemini_model.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
 
-                except Exception:
+            selected = (
+                response.text
+                .strip()
+                .upper()
+            )
 
-                    answer = None
+            if selected in {
+                "SQL",
+                "FORECAST",
+                "RETRIEVAL"
+            }:
 
-            # ------------------------------------------------
-            # Fallback
-            # ------------------------------------------------
-
-            if not answer:
-
-                answer = (
-                    "SQL analysis completed successfully."
+                return (
+                    selected.lower(),
+                    "Gemini planner selected the appropriate tool."
                 )
 
-            return {
-                "tool": "sql",
-                "reason": reason,
-                "answer": answer,
-                "data": result,
-                "sources": []
-            }
+        except Exception:
+            pass
 
-        # ====================================================
-        # UNKNOWN
-        # ====================================================
+    # --------------------------------------------------------
+    # Safe default
+    # --------------------------------------------------------
+
+    return (
+        "sql",
+        "Defaulted to SQL analytics."
+    )
+
+
+# ============================================================
+# FORECAST QUESTION DETECTION
+# ============================================================
+
+def is_forecast_question(question):
+
+    q = question.lower()
+
+    forecast_terms = [
+        "forecast",
+        "predict",
+        "prediction",
+        "future sales",
+        "future demand",
+        "next week",
+        "next weeks",
+        "next month",
+        "expected sales",
+        "expected demand",
+        "demand forecast",
+        "sales forecast",
+        "forecast sales"
+    ]
+
+    return any(
+        term in q
+        for term in forecast_terms
+    )
+
+
+# ============================================================
+# MAIN AGENT
+# ============================================================
+
+def answer(question):
+
+    if not question or not str(question).strip():
 
         return {
-            "tool": "system",
-            "reason":
-                "Unknown tool selected.",
-            "answer":
-                "RetailIQ could not determine the correct tool.",
+            "tool": "SYSTEM",
+            "reason": "Empty question.",
+            "answer": (
+                "Please enter a business question."
+            ),
+            "data": None,
+            "sources": []
+        }
+
+    question = str(
+        question
+    ).strip()
+
+    try:
+
+        tool, planner_reason = choose_tool(
+            question
+        )
+
+        # ----------------------------------------------------
+        # Execute selected tool
+        # ----------------------------------------------------
+
+        if tool == "forecast":
+
+            result = run_forecast(
+                question
+            )
+
+        elif tool == "retrieval":
+
+            result = run_retrieval(
+                question
+            )
+
+        else:
+
+            result = run_sql(
+                question
+            )
+
+        # ----------------------------------------------------
+        # Make sure reasoning is always visible
+        # ----------------------------------------------------
+
+        if not result.get(
+            "reason"
+        ):
+
+            result["reason"] = planner_reason
+
+        return result
+
+    except Exception as e:
+
+        return {
+            "tool": "SYSTEM",
+            "reason": "Execution error.",
+            "answer": (
+                f"Execution failed: "
+                f"{type(e).__name__}: {e}"
+            ),
             "data": None,
             "sources": []
         }
 
 
 # ============================================================
-# TEST
+# COMMAND-LINE TEST
 # ============================================================
 
 if __name__ == "__main__":
 
-    print(
-        "\n" + "=" * 70
-    )
+    test_questions = [
+
+        "What are the total sales?",
+
+        "Which store has the highest total sales?",
+
+        "Which department has the highest total sales?",
+
+        "What are the sales for Store 1?",
+
+        "What are the sales for Department 1?",
+
+        "Show monthly sales.",
+
+        "How did holidays affect sales?",
+
+        "Predict the next 4 weeks for Department 1 in Store 1",
+
+        "Predict the next week sales for Department 1 in Store 2",
+
+        "What is the inventory reorder policy?",
+
+        "When should a slow-moving product be marked down?",
+
+        "What is the procedure for damaged stock?",
+
+        "How should returns be treated in demand modelling?"
+    ]
 
     print(
-        "RetailIQ Walmart Agent Test"
+        "\nRetailIQ Agent Test"
     )
 
     print(
         "=" * 70
     )
 
-    agent = RetailIQAgent()
-
-    questions = [
-
-        "Which departments have the highest sales?",
-
-        "Which store has the highest sales?",
-
-        "Show monthly sales.",
-
-        "What are the markdown effects?",
-
-        "Forecast Department 1 for Store 1 for the next 4 weeks.",
-
-        "What is the return policy?"
-
-    ]
-
-    for question in questions:
+    for question in test_questions:
 
         print(
-            "\nQUESTION:",
-            question
+            f"\nUSER: {question}"
         )
 
-        result = agent.answer(
+        result = answer(
             question
         )
 
         print(
-            "\nTOOL:",
-            result.get("tool")
+            f"TOOL: {result['tool']}"
         )
 
         print(
-            "REASON:",
-            result.get("reason")
+            f"REASON: {result['reason']}"
         )
 
         print(
-            "ANSWER:",
-            result.get("answer")
+            "ANSWER:"
         )
 
-        data = result.get(
-            "data"
+        print(
+            result["answer"]
         )
 
-        if isinstance(
-            data,
-            pd.DataFrame
-        ):
+        if result.get("sources"):
 
             print(
-                "\nDATA:"
+                "SOURCES:"
             )
 
-            print(
-                data.head(10)
-            )
+            for source in result["sources"]:
 
-        if result.get(
-            "sources"
-        ):
+                print(
+                    f"  - {source}"
+                )
 
-            print(
-                "\nSOURCES:",
-                result.get("sources")
-            )
+        print(
+            "-" * 70
+        )

@@ -1,2 +1,2 @@
-model,MAPE,RMSE
-Tree-based,1.5326574320857351,2955.078368620237
+model,mae,rmse,mape,train_rows,validation_rows,features
+HistGradientBoostingRegressor,1401.313984940522,2981.5944791025777,84.96822304359617,315924,79192,"lag_1,lag_2,lag_4,lag_8,roll_4,roll_8,avg_price,promotion_rate,weekofyear,month"

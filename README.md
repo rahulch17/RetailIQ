@@ -1,37 +1,64 @@
 # RetailIQ — Demand Forecasting and Multi-Tool Business Assistant
 
-Runnable MVP based on Project CP-05:
-- reproducible retail data pipeline
-- star-schema analytical database
-- product-store-week demand forecasting
-- tree-based model + LSTM sequence model
-- executive dashboard
-- forecast explorer
-- retrieval over internal policy documents
-- planner/executor assistant selecting SQL, forecast, or retrieval tools
+## Project alignment
+This implementation follows the CP-05 RetailIQ brief: reproducible data preparation, a star-schema analytical layer, executive dashboard, product-store-week forecasting with forward validation, a sequence-model comparison, a planner/executor assistant exposing SQL, forecast and retrieval tools, visible tool reasoning, and cited policy answers.
 
-## Quick start
+## Dataset
+The code is configured for the Walmart Store Sales Forecasting dataset:
+- `train.csv`
+- `features.csv`
+- `stores.csv`
 
+Put them under `walmart/`.
+
+Important source limitation: this Walmart dataset has weekly Store×Department sales, not transaction-level SKU sales. It has markdown fields but no actual selling price, inventory levels, product descriptions, or promotional calendar. The code therefore uses markdown fields as a promotion proxy and a neutral price placeholder. Optional `walmart/products.csv` can supply `Dept` + `description` for text-derived category features.
+
+## Setup
 ```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-
-python generate_demo_data.py
+python -m pip install -r requirements.txt
 python pipeline.py
 python train_models.py
-streamlit run app.py
+python build_rag.py
+python analysis.py
+python -m streamlit run app.py
 ```
 
-The demo generator creates synthetic data so the application can be tested end-to-end.
-For the actual project, replace the demo files in `data/` with the approved dataset.
+If TensorFlow is difficult to install on your Python version, the tree model and application can still run; the LSTM comparison will be skipped. For the assessed sequence-model requirement, run the LSTM on a supported TensorFlow/Python environment.
 
-## Architecture
+## Tool architecture
+User → planner → one of:
+1. SQL tool → SQLite star schema
+2. Forecast tool → trained tree model
+3. Retrieval tool → internal knowledge base
+→ grounded answer + visible tool/reason
 
-User -> Streamlit UI -> Planner/Executor Agent
-                    -> SQL Analytics Tool -> SQLite star schema
-                    -> Forecast Tool -> trained models
-                    -> Retrieval Tool -> policy documents
+Gemini is optional for ambiguous planning and policy answer synthesis. Deterministic routing remains available so the demo does not fail just because an API key is absent.
 
-The agent displays the selected tool and a concise selection explanation.
+## Forecasting
+The tree model uses:
+- lag 1, 2, 4, 8
+- rolling 4 and 8
+- promotion proxy
+- calendar week and month
+- neutral price placeholder
+
+Validation is forward in time. MAPE is calculated only on meaningful non-zero actuals because ordinary MAPE becomes numerically meaningless around zero sales.
+
+## Limitations to defend
+1. Walmart is weekly Store×Department data, not transaction/SKU data.
+2. No true item price is supplied, so price sensitivity is not estimable from this source.
+3. No inventory table is supplied, so inventory cover is reported as unavailable rather than fabricated.
+4. Markdown fields are a promotion proxy, not a true campaign flag.
+5. Product-description text features require an optional product master with descriptions.
+
+## Submission checklist
+- Public Git repository
+- README and architecture diagram
+- Executed analysis/model notebooks
+- SQL schema and query files
+- Streamlit application
+- Dashboard export PDF
+- 8–10 presentation slides
+- Live deployment
+
+Do not commit `.env`, database files, model artifacts, or API keys.

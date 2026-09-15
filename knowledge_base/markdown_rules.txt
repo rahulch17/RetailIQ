@@ -1,2 +1,0 @@
-Markdown Rules
-Markdown decisions should consider remaining inventory, expected demand, product age and promotional activity.

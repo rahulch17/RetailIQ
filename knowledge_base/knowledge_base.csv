@@ -1,0 +1,219 @@
+chunk_id,document_order,document,document_id,document_title,section_order,section,topic,content
+KB-02-01,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,1,PURPOSE,purpose,This policy defines minimum controls for making retail data suitable for analysis and forecasting.
+KB-02-02,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,2,SOURCE RECONCILIATION,source_reconciliation,Transaction records should be reconciled against approved store and product masters. Unmatched records should be identified and investigated.
+KB-02-03,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,3,MISSING PROMOTION FLAGS,missing_promotion_flags,"Missing promotion flags should be handled using a documented rule. Where a reliable promotion calendar exists, it may be used to populate missing values. Otherwise, the transformation should be clearly documented."
+KB-02-04,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,4,NEGATIVE QUANTITIES,negative_quantities,Negative quantities should be preserved when they represent returns. They should be reconciled separately from completed sales before modelling.
+KB-02-05,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,5,DUPLICATES,duplicates,Potential duplicate records should be identified using the transaction grain and source-system identifiers before aggregation.
+KB-02-06,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,6,STORE OPEN/CLOSE PERIODS,store_open_close_periods,Stores that opened or closed mid-period should be identified. Missing sales during inactive periods should not automatically be treated as zero demand.
+KB-02-07,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,7,MISSING PRICES,missing_prices,"If the source dataset does not contain actual selling price, the pipeline must not imply that a proxy is the true observed price. Any placeholder or neutral proxy should be documented."
+KB-02-08,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,8,PROMOTION PROXIES,promotion_proxies,"If markdown fields are used as a proxy for promotions, the documentation should explicitly identify the proxy and its limitations."
+KB-02-09,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,9,AUDITABILITY,auditability,Transformations should be reproducible and documented in the pipeline. Source columns and derived columns should be traceable.
+KB-02-10,2,data_quality_policy.txt,RIQ-DQ-001,Data Quality Policy,10,ASSISTANT RULE,assistant_rule,"When a user asks a data-quality question, RetailIQ should describe the documented transformation rather than invent an undocumented cleaning rule."
+KB-03-01,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,1,PURPOSE,purpose,These guidelines describe how RetailIQ should interpret forecasts and translate forecast outputs into planning decisions.
+KB-03-02,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,2,FORECAST GRAIN,forecast_grain,The primary forecast grain is product-store-week. Forecasts should be evaluated at the same grain used for training and validation.
+KB-03-03,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,3,FORECAST INTERPRETATION,forecast_interpretation,"A forecast is an estimate of expected future demand, not a guarantee of actual sales. Forecast users should consider:
+- historical patterns;
+- seasonality;
+- promotions;
+- holidays;
+- recent changes in demand;
+- data quality."
+KB-03-04,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,4,PLANNING WITH FORECASTS,planning_with_forecasts,"Forecasts can support:
+- replenishment planning;
+- inventory cover analysis;
+- store allocation;
+- promotional preparation;
+- capacity planning."
+KB-03-05,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,5,LOW-CONFIDENCE RESULTS,low_confidence_results,"When the system has insufficient history or material data quality issues, the assistant should state the limitation rather than imply high certainty."
+KB-03-06,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,6,MODEL EVALUATION,model_evaluation,"Forecasting performance should be evaluated using time-aware validation. Recommended metrics include RMSE and MAPE, with an explanation of their commercial meaning."
+KB-03-07,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,7,COMMERCIAL INTERPRETATION,commercial_interpretation,RMSE expresses the typical scale of forecast error in the target unit but gives greater weight to larger errors. MAPE expresses relative error for observations with meaningful non-zero demand.
+KB-03-08,3,demand_planning_guidelines.txt,RIQ-DMD-001,Demand Planning Guidelines,8,ASSISTANT RULE,assistant_rule,The assistant should distinguish historical observed sales from model-generated forecasts.
+KB-04-01,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,1,PURPOSE,purpose,"This policy defines how RetailIQ should interpret inventory position, inventory cover, replenishment priority, reorder decisions, safety stock, and stockout escalation. The policy is synthetic and created for the RetailIQ academic project. It is not an actual Walmart policy."
+KB-04-02,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,2,CORE PRINCIPLE,core_principle,"The objective of replenishment is to maintain sufficient inventory to support expected demand while avoiding unnecessary excess stock. Replenishment decisions should consider recent demand, expected demand, replenishment lead time, safety stock, and known supply constraints."
+KB-04-03,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,3,INVENTORY COVER,inventory_cover,"Inventory cover represents the number of future demand periods that the available inventory can support.
+
+Recommended calculation:
+Inventory Cover (weeks) = Available Sellable Inventory / Expected Weekly Demand
+
+Expected Weekly Demand should normally be based on the latest approved demand forecast. If no forecast is available, use a documented recent-demand baseline."
+KB-04-04,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,4,TARGET INVENTORY COVER,target_inventory_cover,"Target cover should reflect expected demand during supplier lead time plus an appropriate safety-stock allowance.
+
+A practical planning relationship is:
+Reorder Point = Lead-Time Demand + Safety Stock
+
+Lead-Time Demand = Expected Weekly Demand × Lead Time in Weeks
+
+RetailIQ must not invent lead times, safety-stock levels, or inventory values when the required data is unavailable."
+KB-04-05,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,5,REORDER PRIORITY,reorder_priority,"Items should be prioritized for replenishment when:
+- projected inventory cover is below the approved target;
+- projected inventory reaches the reorder point within the supplier lead time;
+- sustained low cover creates material stockout risk;
+- demand is increasing while available inventory is declining.
+
+High-priority cases include fast-moving products with low cover and limited replenishment flexibility."
+KB-04-06,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,6,SAFETY STOCK,safety_stock,"Safety stock is intended to absorb demand and supply uncertainty. It should be higher when demand variability, lead-time variability, or service-level requirements are high.
+
+RetailIQ should report the source of any safety-stock assumption. If no approved value exists in the data or policy, the assistant should say that the safety-stock value cannot be determined from the available records."
+KB-04-07,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,7,STOCKOUT RISK,stockout_risk,A product should be considered at elevated stockout risk when projected inventory reaches zero or falls below the approved safety threshold before the next replenishment arrives.
+KB-04-08,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,8,INVENTORY DATA UNAVAILABLE,inventory_data_unavailable,"When current inventory, lead time, or another required field is missing, the assistant must not fabricate inventory cover or reorder points. It should clearly state which input is unavailable and provide the policy rule that would apply once the data is available."
+KB-04-09,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,9,INVENTORY COVER INTERPRETATION,inventory_cover_interpretation,"Low cover alone does not always mean an immediate emergency. Planners should consider:
+- forecast accuracy;
+- upcoming promotions;
+- seasonality;
+- open purchase orders;
+- supplier lead time;
+- minimum order quantities;
+- known store closures or exceptional events."
+KB-04-10,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,10,EXAMPLE,example,"If available inventory is 2,000 units and expected weekly demand is 500 units:
+Inventory Cover = 2,000 / 500 = 4 weeks.
+
+This is an illustrative calculation only. A reorder decision still depends on target cover, lead time, safety stock, and open replenishment."
+KB-04-11,4,inventory_policy.txt,RIQ-INV-001,Inventory Policy,11,ASSISTANT RULE,assistant_rule,"For policy questions, RetailIQ must cite this document and must not present a numerical inventory decision as fact unless the required operational data exists."
+KB-05-01,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,1,PURPOSE,purpose,"This policy establishes a structured approach for reducing the selling price of slow-moving, seasonal, aging, damaged, or otherwise at-risk stock."
+KB-05-02,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,2,OBJECTIVE,objective,"Markdowns should:
+- improve sell-through;
+- reduce aged inventory;
+- limit avoidable write-downs;
+- protect customer value perception;
+- support disciplined end-of-season clearance."
+KB-05-03,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,3,WHEN TO CONSIDER A MARKDOWN,when_to_consider_a_markdown,"A markdown may be considered when one or more of the following apply:
+- inventory age exceeds the approved threshold;
+- sales velocity remains below plan for a sustained period;
+- inventory cover is materially above the target range;
+- a seasonal selling window is approaching its end;
+- a product is being replaced or discontinued;
+- forecast demand is insufficient to clear expected inventory.
+
+Markdown decisions should use evidence from sales velocity, inventory position, age, forecast demand, and commercial context."
+KB-05-04,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,4,MARKDOWN STAGES,markdown_stages,"RetailIQ may use a staged markdown approach:
+
+Stage 1 - Review:
+Monitor slow movement and confirm the issue is persistent.
+
+Stage 2 - Initial Markdown:
+Apply a moderate reduction when the product meets the approved review criteria.
+
+Stage 3 - Escalation:
+Increase the reduction if sell-through remains below plan after the initial markdown period.
+
+Stage 4 - Clearance:
+Use a final clearance action when remaining inventory has limited expected demand or a selling deadline is approaching.
+
+Exact discount percentages must come from an approved merchandising decision or product rule. RetailIQ must not invent a percentage when none is available."
+KB-05-05,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,5,PROMOTIONS VS MARKDOWNS,promotions_vs_markdowns,A promotion is a planned commercial activity that can temporarily increase demand. A markdown is a price reduction intended to improve sell-through or clear stock. They should not be treated as identical concepts.
+KB-05-06,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,6,PROMOTION EFFECT,promotion_effect,"When evaluating a markdown or promotion, compare sales with an appropriate non-promoted baseline. Consider seasonality and changes in store traffic before concluding that a price reduction caused the full observed lift."
+KB-05-07,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,7,EXCEPTIONS,exceptions,"Markdown recommendations should be escalated for:
+- regulated products;
+- products with contractual price restrictions;
+- products with unusual returns;
+- products affected by quality or safety incidents;
+- products required for strategic assortment reasons."
+KB-05-08,5,markdown_policy.txt,RIQ-MKD-001,Markdown Policy,8,ASSISTANT RULE,assistant_rule,"The assistant should cite this document for markdown-policy questions. If a user asks for a specific markdown percentage and the approved value is absent, the assistant must state that the policy does not specify a numeric value rather than inventing one."
+KB-06-01,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,1,PURPOSE,purpose,This document defines how promotional activity should be interpreted in RetailIQ analytics and planning.
+KB-06-02,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,2,PROMOTION IDENTIFICATION,promotion_identification,"A promotion should be represented using the approved promotion flag or promotion calendar where available. For datasets that provide markdown fields instead of a true promotion flag, the transformation must be documented as a proxy rather than described as a perfect representation of promotion activity."
+KB-06-03,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,3,PROMOTION LIFT,promotion_lift,"Promotion lift should be measured against a comparable non-promotion baseline.
+
+A simple percentage lift can be expressed as:
+Promotion Lift % = (Promoted Demand - Baseline Demand) / Baseline Demand × 100
+
+The baseline should account for seasonality and other major differences where practical."
+KB-06-04,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,4,CAUSALITY,causality,"A higher sales volume during a promotion does not automatically prove that the promotion caused the full increase. Analysts should consider:
+- seasonality;
+- holidays;
+- inventory availability;
+- pricing changes;
+- store traffic;
+- overlapping campaigns."
+KB-06-05,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,5,PROMOTIONAL FORECASTING,promotional_forecasting,Known upcoming promotions should be incorporated into forecasting only when reliable future promotion information is available.
+KB-06-06,6,promotion_guidelines.txt,RIQ-PRO-001,Promotion Guidelines,6,ASSISTANT RULE,assistant_rule,"When discussing promotion performance, RetailIQ should explain whether the result is descriptive or causal and should state the available data limitations."
+KB-07-01,7,returns_policy.txt,RIQ-RET-001,Returns Policy,1,PURPOSE,purpose,"This policy defines how returned units should be recorded, reconciled, and separated from completed sales for analytical purposes."
+KB-07-02,7,returns_policy.txt,RIQ-RET-001,Returns Policy,2,RETURN RECORDING,return_recording,"Returned units should be represented separately when the source system provides return transactions.
+
+Negative quantity values may be used to represent returns in transactional data. They should not be silently deleted during data preparation."
+KB-07-03,7,returns_policy.txt,RIQ-RET-001,Returns Policy,3,RECONCILIATION,reconciliation,"Before demand modelling, return transactions should be reconciled so that reported demand reflects the project’s chosen business definition of demand.
+
+The reconciliation rule must be documented. For example, a model may use gross sales or net sales depending on the approved modelling specification."
+KB-07-04,7,returns_policy.txt,RIQ-RET-001,Returns Policy,4,DATA QUALITY,data_quality,"When negative quantities appear:
+- verify whether they represent genuine returns;
+- distinguish returns from data-entry corrections;
+- preserve the original record where auditability is required;
+- record the reconciliation treatment."
+KB-07-05,7,returns_policy.txt,RIQ-RET-001,Returns Policy,5,CUSTOMER RETURN QUESTIONS,customer_return_questions,Specific customer eligibility rules should come from the approved customer-facing return policy or connected policy document. This synthetic policy is focused on analytical treatment of return transactions.
+KB-07-06,7,returns_policy.txt,RIQ-RET-001,Returns Policy,6,ASSISTANT RULE,assistant_rule,RetailIQ should not claim that all negative quantities are errors. It should explain that negative quantities can represent legitimate returns and should be reconciled appropriately before demand modelling.
+KB-08-01,8,sop.txt,RIQ-SOP-001,Sop,1,PURPOSE,purpose,"This document provides standard procedures for receiving stock, checking inventory, handling discrepancies, recording exceptions, and supporting reliable operational data."
+KB-08-02,8,sop.txt,RIQ-SOP-001,Sop,2,RECEIVING INVENTORY,receiving_inventory,At receipt:
+KB-08-03,8,sop.txt,RIQ-SOP-001,Sop,3,DAMAGED STOCK,damaged_stock,"Damaged stock should be identified separately from sellable stock. The responsible team should record the quantity, reason, and operational disposition where the system supports those fields."
+KB-08-04,8,sop.txt,RIQ-SOP-001,Sop,4,STOCK COUNT,stock_count,"Cycle counts should be performed according to the approved store schedule. During a count:
+- count physical sellable units;
+- identify damaged or quarantined units;
+- compare physical count with system inventory;
+- investigate material differences."
+KB-08-05,8,sop.txt,RIQ-SOP-001,Sop,5,INVENTORY DISCREPANCIES,inventory_discrepancies,"When physical and system inventory differ:
+- re-count the affected item;
+- check recent receipts and transfers;
+- check known returns or adjustments;
+- document the root cause where possible;
+- update inventory only through the approved transaction process."
+KB-08-06,8,sop.txt,RIQ-SOP-001,Sop,6,STOCK TRANSFERS,stock_transfers,Transfers between stores should be recorded as inventory movements and should not be confused with external sales.
+KB-08-07,8,sop.txt,RIQ-SOP-001,Sop,7,STOCKOUT ESCALATION,stockout_escalation,"When an item is at imminent stockout risk:
+- confirm physical and system stock;
+- review incoming replenishment;
+- assess substitution or transfer options;
+- inform the responsible planner or supervisor."
+KB-08-08,8,sop.txt,RIQ-SOP-001,Sop,8,DATA QUALITY,data_quality,Operational records should be timestamped and traceable to the responsible source system or process.
+KB-08-09,8,sop.txt,RIQ-SOP-001,Sop,9,ASSISTANT RULE,assistant_rule,"For procedure questions, the assistant should cite the relevant SOP section and avoid claiming that a procedure exists when it is not documented."
+KB-09-01,9,stockout_escalation.txt,RIQ-STK-001,Stockout Escalation,1,TRIGGER,trigger,Escalation is required when projected available inventory is insufficient to cover expected demand until the next feasible replenishment.
+KB-09-02,9,stockout_escalation.txt,RIQ-STK-001,Stockout Escalation,2,LEVEL 1 - VERIFY,level_1_verify,"Confirm:
+- physical inventory;
+- system inventory;
+- open purchase orders;
+- expected receipt dates;
+- current forecast;
+- recent sales anomalies."
+KB-09-03,9,stockout_escalation.txt,RIQ-STK-001,Stockout Escalation,3,LEVEL 2 - MITIGATE,level_2_mitigate,"Where operationally allowed:
+- consider store-to-store transfer;
+- prioritize replenishment;
+- review substitute products;
+- review timing of planned promotions;
+- communicate expected availability risk."
+KB-09-04,9,stockout_escalation.txt,RIQ-STK-001,Stockout Escalation,4,LEVEL 3 - ESCALATE,level_3_escalate,"Escalate to the responsible planner or supervisor when:
+- the expected stockout is material;
+- supplier delays are involved;
+- no feasible replenishment option exists;
+- customer service impact is expected."
+KB-09-05,9,stockout_escalation.txt,RIQ-STK-001,Stockout Escalation,5,ASSISTANT RULE,assistant_rule,The assistant should not describe a stockout as confirmed solely from a forecast. It should distinguish projected risk from observed zero inventory.
+KB-10-01,10,store_operations.txt,RIQ-OPS-001,Store Operations,1,STORE STATUS,store_status,Store-level analysis should consider whether the store was operating during the period being evaluated.
+KB-10-02,10,store_operations.txt,RIQ-OPS-001,Store Operations,2,OPENING AND CLOSING,opening_and_closing,Stores that opened or closed during the analysis period should be handled explicitly. Periods outside active operation should not automatically be interpreted as zero customer demand.
+KB-10-03,10,store_operations.txt,RIQ-OPS-001,Store Operations,3,SALES INTERPRETATION,sales_interpretation,"When comparing stores:
+- consider operating dates;
+- consider store size or format when available;
+- distinguish total sales from sales intensity;
+- check for missing periods."
+KB-10-04,10,store_operations.txt,RIQ-OPS-001,Store Operations,4,STORE PERFORMANCE,store_performance,A store ranking based on total sales answers a volume question. It does not automatically identify the most efficient store.
+KB-10-05,10,store_operations.txt,RIQ-OPS-001,Store Operations,5,ASSISTANT RULE,assistant_rule,"When a store has incomplete operating history, the assistant should mention the coverage limitation when it materially affects the comparison."
+KB-11-01,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,1,PURPOSE,purpose,This document defines the information RetailIQ should use when reasoning about supplier replenishment terms.
+KB-11-02,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,2,APPROVED SOURCE OF TRUTH,approved_source_of_truth,"Supplier-specific lead time, minimum order quantity, payment terms, delivery windows, and service commitments should be taken from the approved supplier master or approved contract-management system."
+KB-11-03,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,3,REQUIRED SUPPLIER FIELDS,required_supplier_fields,"Where available, the approved supplier record should contain:
+- supplier identifier;
+- product or category coverage;
+- standard lead time;
+- minimum order quantity;
+- case-pack quantity;
+- order calendar;
+- delivery days;
+- payment terms;
+- agreed service level;
+- escalation contact."
+KB-11-04,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,4,LEAD TIME,lead_time,"Lead time is the elapsed time between an approved purchase order and the expected receipt of inventory.
+
+RetailIQ may use supplier lead time in reorder-point and inventory-cover calculations only when the value is present in an approved source."
+KB-11-05,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,5,MINIMUM ORDER QUANTITY,minimum_order_quantity,Minimum order quantity can affect the commercial feasibility of replenishment. A reorder recommendation should not assume that any arbitrary order quantity is acceptable.
+KB-11-06,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,6,LATE DELIVERIES,late_deliveries,"When delivery performance is below the approved expectation:
+- identify the affected supplier and order;
+- assess near-term stockout risk;
+- consider available alternative supply;
+- escalate according to the approved supplier-management process."
+KB-11-07,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,7,MISSING SUPPLIER DATA,missing_supplier_data,"RetailIQ must not invent supplier-specific lead times, payment terms, order quantities, or penalties.
+
+When supplier information is unavailable, the assistant should say that the approved supplier record is required to answer the supplier-specific question."
+KB-11-08,11,supplier_terms.txt,RIQ-SUP-001,Supplier Terms,8,ASSISTANT RULE,assistant_rule,Supplier questions should cite this document when the user asks about the general policy. Supplier-specific questions should be clearly distinguished from general policy and should use supplier master data when that data is connected to RetailIQ.

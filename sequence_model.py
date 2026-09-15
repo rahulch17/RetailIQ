@@ -1,83 +1,63 @@
 from pathlib import Path
 import numpy as np
 import pandas as pd
-import torch
-from torch import nn
-from torch.utils.data import DataLoader, TensorDataset
 
-ART = Path("artifacts")
-ART.mkdir(exist_ok=True)
+ARTIFACT = Path("artifacts/lstm_model.keras")
+METRICS = Path("artifacts/sequence_metrics.csv")
 
-class LSTMForecaster(nn.Module):
-    def __init__(self, n_features=4, hidden=32):
-        super().__init__()
-        self.lstm = nn.LSTM(n_features, hidden, batch_first=True)
-        self.fc = nn.Linear(hidden, 1)
+BASE_FEATURES = ["quantity", "avg_price", "promotion_rate"]
 
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(out[:, -1, :]).squeeze(-1)
 
-def train_lstm(weekly, epochs=5, seq_len=8):
-    x = weekly.copy()
-    x["week_start"] = pd.to_datetime(x["week_start"])
-    x = x.sort_values(["product_id", "store_id", "week_start"])
-
+def make_sequences(group, lookback=8):
+    g = group.sort_values("week_start").copy()
+    values = g[BASE_FEATURES].astype(float).values
     X, y = [], []
+    for i in range(lookback, len(values)):
+        X.append(values[i-lookback:i])
+        y.append(values[i, 0])
+    return np.asarray(X), np.asarray(y)
 
-    for _, g in x.groupby(["product_id", "store_id"]):
-        g = g.reset_index(drop=True)
-        if len(g) <= seq_len:
-            continue
 
-        q = g["quantity"].to_numpy(float)
-        p = g["avg_price"].to_numpy(float)
-        promo = g["promotion_rate"].to_numpy(float)
+def train_sequence_model(weekly, lookback=8):
+    try:
+        import tensorflow as tf
+        from tensorflow.keras import Sequential
+        from tensorflow.keras.layers import LSTM, Dense
+    except Exception as e:
+        raise RuntimeError("TensorFlow is required for the LSTM comparison.") from e
 
-        for i in range(seq_len, len(g)):
-            window = np.column_stack([
-                q[i-seq_len:i],
-                p[i-seq_len:i],
-                promo[i-seq_len:i],
-                np.arange(seq_len) / seq_len,
-            ])
-            X.append(window)
-            y.append(q[i])
+    parts = []
+    for _, g in weekly.groupby(["product_id", "store_id"]):
+        if len(g) >= lookback + 10:
+            X, y = make_sequences(g, lookback)
+            if len(X):
+                parts.append((X, y))
 
-    if not X:
-        raise ValueError("Not enough sequential history to train LSTM.")
+    if not parts:
+        raise ValueError("Not enough data for LSTM sequences.")
 
-    X = torch.tensor(np.asarray(X), dtype=torch.float32)
-    y = torch.tensor(np.asarray(y), dtype=torch.float32)
+    X = np.concatenate([p[0] for p in parts])
+    y = np.concatenate([p[1] for p in parts])
 
-    split = int(len(X) * 0.8)
-    loader = DataLoader(
-        TensorDataset(X[:split], y[:split]),
-        batch_size=256,
-        shuffle=True
-    )
+    cut = int(len(X) * 0.8)
+    Xtr, Xv, ytr, yv = X[:cut], X[cut:], y[:cut], y[cut:]
 
-    model = LSTMForecaster(X.shape[-1])
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    loss_fn = nn.MSELoss()
+    model = Sequential([
+        LSTM(32, input_shape=(lookback, len(BASE_FEATURES))),
+        Dense(16, activation="relu"),
+        Dense(1)
+    ])
+    model.compile(optimizer="adam", loss="mse", metrics=["mae"])
+    model.fit(Xtr, ytr, validation_data=(Xv, yv), epochs=5, batch_size=64, verbose=0)
 
-    model.train()
-    for _ in range(epochs):
-        for xb, yb in loader:
-            optimizer.zero_grad()
-            loss = loss_fn(model(xb), yb)
-            loss.backward()
-            optimizer.step()
+    pred = np.maximum(model.predict(Xv, verbose=0).ravel(), 0)
+    rmse = float(np.sqrt(np.mean((yv - pred) ** 2)))
+    mask = np.abs(yv) >= 1.0
+    mape = float(np.mean(np.abs((yv[mask] - pred[mask]) / yv[mask])) * 100) if mask.any() else np.nan
 
-    torch.save(model.state_dict(), ART / "lstm_model.pt")
+    ARTIFACT.parent.mkdir(exist_ok=True)
+    model.save(ARTIFACT)
+    pd.DataFrame([{"model":"LSTM","rmse":rmse,"mape":mape,"lookback":lookback}]).to_csv(METRICS, index=False)
+    print(f"LSTM RMSE: {rmse:.2f}")
+    print(f"LSTM MAPE (non-zero actuals): {mape:.2f}%")
     return model
-
-if __name__ == "__main__":
-    import sqlite3
-    with sqlite3.connect("retailiq.db") as con:
-        weekly = pd.read_sql(
-            "SELECT * FROM fact_weekly_sales",
-            con
-        )
-    train_lstm(weekly)
-    print("LSTM model saved.")

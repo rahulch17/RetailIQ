@@ -1,5 +1,10 @@
 .env
+retailiq.db
+*.db
+artifacts/
+rag_index.faiss
+rag_documents.pkl
 __pycache__/
 *.pyc
-retailiq.db
-artifacts/
+.ipynb_checkpoints/
+.streamlit/secrets.toml

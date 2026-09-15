@@ -1,2 +1,0 @@
-Inventory Policy
-Stores should review inventory cover weekly. Items with low projected cover should be escalated for replenishment.
