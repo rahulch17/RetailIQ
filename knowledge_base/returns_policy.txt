@@ -1,0 +1,2 @@
+Returns Policy
+Returned units are recorded as negative transaction quantities and should be reconciled before demand modelling.
